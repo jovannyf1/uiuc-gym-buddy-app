@@ -79,6 +79,10 @@ const netidConfigured = [
 ].every(Boolean);
 const pilotAuthEnabled = !netidConfigured
   && (process.env.NODE_ENV !== 'production' || process.env.ALLOW_PILOT_AUTH === 'true');
+// If password sign-in is disabled, require an attached Illinois identity for
+// every existing session too. This keeps old pilot cookies from bypassing the
+// production sign-in mode when OIDC is missing or only partly configured.
+const netidIdentityRequired = !pilotAuthEnabled;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 0, parts: 1 },
@@ -198,7 +202,7 @@ function requireAuth(req, res, next) {
     WHERE s.token_hash = ? AND s.expires_at > ?
   `).get(tokenHash(token), Date.now());
   if (!session) return next(new InputError('Sign in to continue.', 401));
-  if (netidConfigured && !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(session.id)) {
+  if (netidIdentityRequired && !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(session.id)) {
     return next(new InputError('Sign in with Illinois NetID to continue.', 401));
   }
   req.user = session;
@@ -221,7 +225,7 @@ app.use('/api', (req, res, next) => {
   next(new InputError('Request origin is not allowed.', 403));
 });
 
-registerSocialRoutes({ app, db, requireAuth });
+registerSocialRoutes({ app, db, requireAuth, netidIdentityRequired });
 const blockedPair = db.prepare(`SELECT 1 FROM user_blocks
   WHERE (blocker_user_id = ? AND blocked_user_id = ?)
      OR (blocker_user_id = ? AND blocked_user_id = ?) LIMIT 1`);
@@ -346,7 +350,7 @@ app.get('/api/matches', requireAuth, (req, res, next) => {
     const people = db.prepare('SELECT * FROM users WHERE id != ?').all(req.user.id);
     const matches = [];
     for (const person of people) {
-      if (netidConfigured && !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(person.id)) continue;
+      if (netidIdentityRequired && !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(person.id)) continue;
       if (usersBlocked(req.user.id, person.id)) continue;
       const details = matchDetails(own, matchProfile(person), ownSlots, slotsFor(person.id));
       if (details) matches.push({ user: profile(person), ...details });
@@ -380,7 +384,7 @@ const meetupSelect = `SELECT m.*, sender.name AS from_name, recipient.name AS to
 app.get('/api/meetups', requireAuth, (req, res) => {
   const rows = db.prepare(`${meetupSelect} WHERE m.from_user_id = ? OR m.to_user_id = ?
     ORDER BY m.date, m.start, m.created_at`).all(req.user.id, req.user.id);
-  const visible = netidConfigured ? rows.filter(row =>
+  const visible = netidIdentityRequired ? rows.filter(row =>
     db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(row.from_user_id)
     && db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(row.to_user_id)) : rows;
   res.json({ meetups: visible.map(meetupFor) });
@@ -403,7 +407,7 @@ app.post('/api/meetups', requireAuth, (req, res, next) => {
     }
     const candidate = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
     if (!candidate) throw new InputError('This student is no longer available to invite.', 404);
-    if (netidConfigured && !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(targetId)) {
+    if (netidIdentityRequired && !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(targetId)) {
       throw new InputError('This student must sign in with Illinois NetID before receiving invitations.', 403);
     }
     if (usersBlocked(req.user.id, targetId)) {
@@ -458,6 +462,12 @@ app.patch('/api/meetups/:id', requireAuth, (req, res, next) => {
     const status = enumField(req.body.status, ['accepted', 'declined', 'cancelled'], 'response');
     const row = db.prepare('SELECT * FROM meetups WHERE id = ?').get(id);
     if (!row || (row.from_user_id !== req.user.id && row.to_user_id !== req.user.id)) {
+      throw new InputError('Meetup not found.', 404);
+    }
+    if (netidIdentityRequired && (
+      !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(row.from_user_id)
+      || !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(row.to_user_id)
+    )) {
       throw new InputError('Meetup not found.', 404);
     }
     if (status === 'accepted' || status === 'declined') {

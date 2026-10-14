@@ -65,11 +65,7 @@ function messageFor(row) {
 
 // Social data stays on the server. Only explicitly published, unexpired gym
 // presence is discoverable; private weekly availability is never returned here.
-export function registerSocialRoutes({ app, db, requireAuth }) {
-  const netidOnly = [
-    process.env.ILLINOIS_OIDC_ISSUER, process.env.ILLINOIS_OIDC_CLIENT_ID,
-    process.env.ILLINOIS_OIDC_CLIENT_SECRET, process.env.ILLINOIS_OIDC_REDIRECT_URI,
-  ].every(Boolean);
+export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequired = false }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS workout_presence (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -134,7 +130,7 @@ export function registerSocialRoutes({ app, db, requireAuth }) {
 
   function hasNetidIdentity(userId) {
     // netid_identities is initialized later in index.js, before requests run.
-    return !netidOnly || Boolean(db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(userId));
+    return !netidIdentityRequired || Boolean(db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(userId));
   }
 
   function requireNetidIdentity(userId) {
@@ -219,7 +215,7 @@ export function registerSocialRoutes({ app, db, requireAuth }) {
     const people = [];
     const rows = db.prepare(`SELECT p.user_id, p.activity, p.location, p.expires_at
       FROM workout_presence p
-      ${netidOnly ? 'JOIN netid_identities n ON n.user_id = p.user_id' : ''}
+      ${netidIdentityRequired ? 'JOIN netid_identities n ON n.user_id = p.user_id' : ''}
       WHERE p.user_id != ? AND p.expires_at > ?
       ORDER BY p.updated_at DESC LIMIT 200`).all(req.user.id, now);
     for (const row of rows) {
@@ -237,7 +233,7 @@ export function registerSocialRoutes({ app, db, requireAuth }) {
   app.get('/api/chats', requireAuth, (req, res) => {
     requireNetidIdentity(req.user.id);
     const rows = db.prepare(`SELECT c.* FROM chats c
-      ${netidOnly ? `JOIN netid_identities a ON a.user_id = c.user_a_id
+      ${netidIdentityRequired ? `JOIN netid_identities a ON a.user_id = c.user_a_id
       JOIN netid_identities b ON b.user_id = c.user_b_id` : ''}
       WHERE c.user_a_id = ? OR c.user_b_id = ?
       ORDER BY c.updated_at_ms DESC, c.id DESC LIMIT 100`).all(req.user.id, req.user.id);

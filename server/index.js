@@ -8,6 +8,8 @@ import { mkdirSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { previewImport } from './import.js';
+import { registerNetidRoutes } from './netid.js';
+import { registerSocialRoutes } from './social.js';
 import {
   ACTIVITIES, LOCATIONS, GENDERS, PARTNER_PREFERENCES, EXPERIENCE_LEVELS,
   InputError, timeToMinutes, normalizeSlots, matchDetails, weekdayForDate, chicagoNow,
@@ -70,7 +72,20 @@ db.exec(`
 `);
 
 const SESSION_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_MEETUPS_PER_DAY = 10;
+const MAX_MEETUPS_TO_ONE_STUDENT_PER_DAY = 3;
 const SESSION_COOKIE = 'uiuc_gym_buddy_session';
+const netidConfigured = [
+  process.env.ILLINOIS_OIDC_ISSUER, process.env.ILLINOIS_OIDC_CLIENT_ID,
+  process.env.ILLINOIS_OIDC_CLIENT_SECRET, process.env.ILLINOIS_OIDC_REDIRECT_URI,
+].every(Boolean);
+const pilotAuthEnabled = !netidConfigured
+  && (process.env.NODE_ENV !== 'production' || process.env.ALLOW_PILOT_AUTH === 'true');
+// If password sign-in is disabled, require an attached Illinois identity for
+// every existing session too. This keeps old pilot cookies from bypassing the
+// production sign-in mode when OIDC is missing or only partly configured.
+const netidIdentityRequired = !pilotAuthEnabled;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 10 * 1024 * 1024, files: 1, fields: 0, parts: 1 },
@@ -157,7 +172,7 @@ function tokenHash(token) {
 function sessionCookieOptions(req) {
   return {
     httpOnly: true,
-    secure: process.env.COOKIE_SECURE === 'true' || req.secure,
+    secure: process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true' || req.secure,
     sameSite: 'lax',
     path: '/',
   };
@@ -190,6 +205,9 @@ function requireAuth(req, res, next) {
     WHERE s.token_hash = ? AND s.expires_at > ?
   `).get(tokenHash(token), Date.now());
   if (!session) return next(new InputError('Sign in to continue.', 401));
+  if (netidIdentityRequired && !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(session.id)) {
+    return next(new InputError('Sign in with Illinois NetID to continue.', 401));
+  }
   req.user = session;
   next();
 }
@@ -210,7 +228,16 @@ app.use('/api', (req, res, next) => {
   next(new InputError('Request origin is not allowed.', 403));
 });
 
+registerSocialRoutes({ app, db, requireAuth, netidIdentityRequired });
+const blockedPair = db.prepare(`SELECT 1 FROM user_blocks
+  WHERE (blocker_user_id = ? AND blocked_user_id = ?)
+     OR (blocker_user_id = ? AND blocked_user_id = ?) LIMIT 1`);
+function usersBlocked(firstId, secondId) {
+  return Boolean(blockedPair.get(firstId, secondId, secondId, firstId));
+}
+
 app.post('/api/auth/register', wrap(async (req, res) => {
+  if (!pilotAuthEnabled) throw new InputError('Pilot password sign-up is unavailable. Use Illinois NetID sign-in.', 403);
   if (!hasOnlyKeys(req.body, ['name', 'email', 'password'])) throw new InputError('Enter your name, Illinois email, and password.');
   const name = textField(req.body.name, 'Name', { min: 2, max: 80 });
   const email = textField(req.body.email, 'Email', { min: 1, max: 254 }).toLowerCase();
@@ -240,6 +267,7 @@ app.post('/api/auth/register', wrap(async (req, res) => {
 
 const loginFailures = new Map();
 app.post('/api/auth/login', wrap(async (req, res) => {
+  if (!pilotAuthEnabled) throw new InputError('Pilot password sign-in is unavailable. Use Illinois NetID sign-in.', 403);
   if (!hasOnlyKeys(req.body, ['email', 'password'])) throw new InputError('Enter your email and password.');
   const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = req.body.password;
@@ -265,6 +293,8 @@ app.post('/api/auth/logout', (req, res) => {
   res.clearCookie(SESSION_COOKIE, sessionCookieOptions(req));
   res.json({ ok: true });
 });
+
+registerNetidRoutes({ app, db, createSession, profile, pilotAuthEnabled });
 
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: profile(req.user, true) }));
 
@@ -323,6 +353,8 @@ app.get('/api/matches', requireAuth, (req, res, next) => {
     const people = db.prepare('SELECT * FROM users WHERE id != ?').all(req.user.id);
     const matches = [];
     for (const person of people) {
+      if (netidIdentityRequired && !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(person.id)) continue;
+      if (usersBlocked(req.user.id, person.id)) continue;
       const details = matchDetails(own, matchProfile(person), ownSlots, slotsFor(person.id));
       if (details) matches.push({ user: profile(person), ...details });
     }
@@ -355,7 +387,10 @@ const meetupSelect = `SELECT m.*, sender.name AS from_name, recipient.name AS to
 app.get('/api/meetups', requireAuth, (req, res) => {
   const rows = db.prepare(`${meetupSelect} WHERE m.from_user_id = ? OR m.to_user_id = ?
     ORDER BY m.date, m.start, m.created_at`).all(req.user.id, req.user.id);
-  res.json({ meetups: rows.map(meetupFor) });
+  const visible = netidIdentityRequired ? rows.filter(row =>
+    db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(row.from_user_id)
+    && db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(row.to_user_id)) : rows;
+  res.json({ meetups: visible.map(meetupFor) });
 });
 
 function conflicts(userId, date, start, end, excludeId = -1) {
@@ -375,6 +410,12 @@ app.post('/api/meetups', requireAuth, (req, res, next) => {
     }
     const candidate = db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
     if (!candidate) throw new InputError('This student is no longer available to invite.', 404);
+    if (netidIdentityRequired && !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(targetId)) {
+      throw new InputError('This student must sign in with Illinois NetID before receiving invitations.', 403);
+    }
+    if (usersBlocked(req.user.id, targetId)) {
+      throw new InputError('You cannot invite this student.', 403);
+    }
     const activity = enumField(req.body.activity, ACTIVITIES, 'activity');
     const location = enumField(req.body.location, LOCATIONS, 'meeting place');
     const date = req.body.date;
@@ -405,7 +446,17 @@ app.post('/api/meetups', requireAuth, (req, res, next) => {
       || conflicts(candidate.id, date, req.body.start, req.body.end)) {
       throw new InputError('One of you already has a workout planned for that time.', 409);
     }
-    const createdAt = new Date().toISOString();
+    const nowMs = Date.now();
+    const since = new Date(nowMs - DAY_MS).toISOString();
+    const sentToday = db.prepare('SELECT COUNT(*) AS total FROM meetups WHERE from_user_id = ? AND created_at >= ?')
+      .get(req.user.id, since).total;
+    const sentToStudentToday = db.prepare(`SELECT COUNT(*) AS total FROM meetups
+      WHERE from_user_id = ? AND to_user_id = ? AND created_at >= ?`)
+      .get(req.user.id, targetId, since).total;
+    if (sentToday >= MAX_MEETUPS_PER_DAY || sentToStudentToday >= MAX_MEETUPS_TO_ONE_STUDENT_PER_DAY) {
+      throw new InputError('You have sent the daily limit of workout invitations. Try again tomorrow.', 429);
+    }
+    const createdAt = new Date(nowMs).toISOString();
     const result = db.prepare(`INSERT INTO meetups
       (from_user_id, to_user_id, activity, date, day, start, end, location, note, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
@@ -424,6 +475,12 @@ app.patch('/api/meetups/:id', requireAuth, (req, res, next) => {
     const status = enumField(req.body.status, ['accepted', 'declined', 'cancelled'], 'response');
     const row = db.prepare('SELECT * FROM meetups WHERE id = ?').get(id);
     if (!row || (row.from_user_id !== req.user.id && row.to_user_id !== req.user.id)) {
+      throw new InputError('Meetup not found.', 404);
+    }
+    if (netidIdentityRequired && (
+      !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(row.from_user_id)
+      || !db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(row.to_user_id)
+    )) {
       throw new InputError('Meetup not found.', 404);
     }
     if (status === 'accepted' || status === 'declined') {

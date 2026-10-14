@@ -13,7 +13,8 @@
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "ical.js": "^2.2.1",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "openid-client": "^6.8.8"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

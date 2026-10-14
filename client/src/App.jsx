@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { ChatsPage, PresencePage } from './Social.jsx';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const SHORT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -7,6 +8,8 @@ const LOCATIONS = ['ARC', 'CRCE'];
 const NAV = [
   { id: 'home', label: 'Overview', icon: 'home' },
   { id: 'matches', label: 'Find a buddy', icon: 'users' },
+  { id: 'now', label: 'Working out now', icon: 'bolt' },
+  { id: 'chats', label: 'Chats', icon: 'chat' },
   { id: 'availability', label: 'My availability', icon: 'calendar' },
   { id: 'import', label: 'Import schedule', icon: 'upload' },
   { id: 'meetups', label: 'Meetups', icon: 'meetup' },
@@ -54,6 +57,11 @@ function Icon({ name, size = 20, strokeWidth = 1.8, className = '' }) {
     image: <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="m21 15-5-5L5 21" /></>,
     lock: <><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
     menu: <path d="M3 6h18M3 12h18M3 18h18" />,
+    chat: <><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8A8.5 8.5 0 0 1 12.5 3 8.5 8.5 0 0 1 21 11.5Z" /><path d="M8 11.5h9" /></>,
+    bolt: <path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" />,
+    send: <><path d="m22 2-7 20-4-9-9-4L22 2Z" /><path d="M22 2 11 13" /></>,
+    flag: <><path d="M5 21V4m0 1c5-4 9 4 15 0v12c-6 4-10-4-15 0" /></>,
+    block: <><circle cx="12" cy="12" r="9" /><path d="m5.6 5.6 12.8 12.8" /></>,
   };
   return <svg className={className} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>{shapes[name] || shapes.spark}</svg>;
 }
@@ -83,6 +91,12 @@ function formatDate(date) {
   if (!date) return '';
   const parsed = new Date(`${date}T12:00:00`);
   return Number.isNaN(parsed.getTime()) ? date : parsed.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+function formatCampusTime(dateTime) {
+  const parsed = new Date(dateTime);
+  return Number.isNaN(parsed.getTime()) ? '' : new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  }).format(parsed);
 }
 function localISO(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -150,7 +164,7 @@ function Notice({ type = 'success', children, onClose }) {
   return <div className={`notice notice-${type}`} role="status"><Icon name={type === 'error' ? 'alert' : 'check'} size={18} /><span>{children}</span><button type="button" className="icon-button" aria-label="Dismiss message" onClick={onClose}><Icon name="close" size={16} /></button></div>;
 }
 
-function AuthScreen({ onAuth, error, busy }) {
+function AuthScreen({ onAuth, error, busy, authOptions }) {
   const [mode, setMode] = useState('register');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
@@ -170,9 +184,9 @@ function AuthScreen({ onAuth, error, busy }) {
       </div>
       <div className="auth-visual-bottom"><span className="hero-kicker">YOUR CAMPUS. YOUR PACE. YOUR PEOPLE.</span><h1>Show up stronger,<br /><em>together.</em></h1><p>Find a workout buddy who fits your schedule, your goals, and your way of moving.</p></div>
     </div>
-    <div className="auth-panel"><div className="auth-panel-inner"><div className="auth-mobile-brand"><Brand /></div><span className="eyebrow">WELCOME TO UIUC GYM BUDDY</span><h2>{mode === 'register' ? 'Find your people.' : 'Welcome back.'}</h2><p className="auth-lede">{mode === 'register' ? 'Create your account to meet students who are ready to move with you.' : 'Sign in and make your next workout happen.'}</p>
-      <div className="auth-tabs" role="group" aria-label="Account action"><button type="button" aria-pressed={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Create account</button><button type="button" aria-pressed={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button></div>
-      <form className="auth-form" onSubmit={submit}>{mode === 'register' && <label>Full name<input type="text" autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" required maxLength={80} /></label>}<label>Email address<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@illinois.edu" required /></label><label>Password<input type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'register' ? 'At least 8 characters' : 'Your password'} required minLength={mode === 'register' ? 8 : 1} /></label>{error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}<button className="button button-primary button-full" type="submit" disabled={busy}>{busy ? 'Just a moment…' : mode === 'register' ? 'Create my account' : 'Sign in'}<Icon name="arrow" size={18} /></button></form>
+    <div className="auth-panel"><div className="auth-panel-inner"><div className="auth-mobile-brand"><Brand /></div><span className="eyebrow">WELCOME TO UIUC GYM BUDDY</span><h2>{mode === 'login' && authOptions.pilotAuthEnabled && !authOptions.netidEnabled ? 'Welcome back.' : 'Find your people.'}</h2><p className="auth-lede">Meet students who are ready to work out when you are.</p>
+      {authOptions.loading ? <p className="auth-lede" role="status">Checking sign-in options…</p> : authOptions.netidEnabled ? <div className="netid-login"><a className="button button-primary button-full" href="/api/auth/netid/start">Sign in with Illinois NetID <Icon name="arrow" size={18} /></a><p>Your university sign-in opens next. You’ll return here when it’s complete.</p>{error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}</div> : authOptions.pilotAuthEnabled ? <><p className="auth-pilot-notice"><Icon name="info" size={18} /> Pilot sign-in: an @illinois.edu email address is required, but ownership is not verified yet.</p><div className="auth-tabs" role="group" aria-label="Account action"><button type="button" aria-pressed={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Create account</button><button type="button" aria-pressed={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button></div>
+      <form className="auth-form" onSubmit={submit}>{mode === 'register' && <label>Full name<input type="text" autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" required maxLength={80} /></label>}<label>Email address<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@illinois.edu" required /></label><label>Password<input type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'register' ? 'At least 8 characters' : 'Your password'} required minLength={mode === 'register' ? 8 : 1} /></label>{error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}<button className="button button-primary button-full" type="submit" disabled={busy}>{busy ? 'Just a moment…' : mode === 'register' ? 'Create my pilot account' : 'Sign in'}<Icon name="arrow" size={18} /></button></form></> : <div className="auth-pending" role="status"><Icon name="lock" size={23} /><h3>Sign-in setup pending</h3><p>Illinois NetID sign-in has not been connected yet. Please check back after the app is configured.</p></div>}
       <p className="auth-footnote"><Icon name="shield" size={17} /> Your schedule is reviewed before any free times are added to your profile.</p>
     </div></div>
   </main>;
@@ -186,7 +200,7 @@ function Sidebar({ view, setView, me, onLogout, mobileOpen, setMobileOpen, pendi
   </aside></>;
 }
 
-function MatchCard({ match, index, onRequest, compact = false }) {
+function MatchCard({ match, index, onRequest, onChat, compact = false }) {
   const user = match.user || match;
   const sharedActivities = match.sharedActivities || [];
   const sharedLocations = match.sharedLocations || [];
@@ -196,11 +210,11 @@ function MatchCard({ match, index, onRequest, compact = false }) {
     {!compact && user.bio && <p className="match-bio">{user.bio}</p>}
     <div className="match-chips">{(sharedActivities.length ? sharedActivities : user.activities || []).slice(0, compact ? 2 : 3).map(activity => <span className="chip" key={activity}>{activity}</span>)}</div>
     <div className="match-details"><div><Icon name="clock" size={16} /><span>{overlaps[0] ? formatWindow(overlaps[0]) : 'No shared time yet'}</span></div><div><Icon name="pin" size={16} /><span>{sharedLocations[0] || (user.locations || [])[0] || 'Choose a location'}</span></div></div>
-    <button type="button" className={`button ${compact ? 'button-text' : 'button-outline button-full'}`} onClick={() => onRequest(match)} disabled={!overlaps.length}>{compact ? 'View & invite' : 'Invite to a workout'}<Icon name="arrow" size={17} /></button>
+    <div className="match-actions"><button type="button" className={`button ${compact ? 'button-text' : 'button-outline'}`} onClick={() => onRequest(match)} disabled={!overlaps.length}>{compact ? 'View & invite' : 'Invite to a workout'}<Icon name="arrow" size={17} /></button><button type="button" className="button button-subtle" onClick={() => onChat(user)}><Icon name="chat" size={17} /> Chat</button></div>
   </article>;
 }
 
-function Home({ me, slots, matches, meetups, setView, onRequest }) {
+function Home({ me, slots, matches, meetups, setView, onRequest, onChat }) {
   const first = (me?.name || 'there').split(' ')[0];
   const upcoming = meetups.filter(m => m.status === 'accepted' && (!m.date || m.date >= uiucClock().date)).sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))[0];
   const pendingIncoming = meetups.filter(m => m.status === 'pending' && String(personId(m.toUser)) === String(me?.id)).length;
@@ -208,12 +222,12 @@ function Home({ me, slots, matches, meetups, setView, onRequest }) {
   return <div className="page-content home-page"><div className="page-greeting"><span className="eyebrow">YOUR WORKOUT CONNECTION</span><h1>Hey, {first}<span className="greeting-period">.</span></h1><p>Good things happen when you show up together.</p></div>
     <section className="home-hero"><div className="hero-content"><span className="hero-pill"><Icon name="spark" size={15} /> YOUR NEXT WORKOUT STARTS HERE</span><h2>Better workouts<br />start with <em>better company.</em></h2><p>Find someone whose schedule and goals line up with yours. Make a plan, then make it happen.</p><button type="button" className="button button-cream" onClick={() => setView('matches')}>Find a buddy <Icon name="arrow" size={18} /></button></div><div className="hero-art" aria-hidden="true"><span className="hero-ring hero-ring-a" /><span className="hero-ring hero-ring-b" /><span className="hero-art-circle"><Icon name="dumbbell" size={86} strokeWidth={1.3} /></span><span className="hero-art-label label-one">YOU GOT THIS</span><span className="hero-art-label label-two">LET'S GO →</span></div></section>
     <div className="stats-grid"><div className="stat-card"><span className="stat-icon orange"><Icon name="users" /></span><div><strong>{matches.length}</strong><span>potential {matches.length === 1 ? 'buddy' : 'buddies'}</span></div></div><div className="stat-card"><span className="stat-icon blue"><Icon name="calendar" /></span><div><strong>{slots.length}</strong><span>open {slots.length === 1 ? 'time' : 'times'} added</span></div></div><div className="stat-card"><span className="stat-icon green"><Icon name="meetup" /></span><div><strong>{pendingIncoming}</strong><span>{pendingIncoming === 1 ? 'invite' : 'invites'} waiting</span></div></div></div>
-    <div className="home-columns"><section><SectionTitle eyebrow="PEOPLE FOR YOUR PACE" title="Students you could meet" action={<button type="button" className="link-button" onClick={() => setView('matches')}>See all <Icon name="arrow" size={16} /></button>} />{matches.length ? <div className="home-matches">{matches.slice(0, 2).map((match, i) => <MatchCard key={match.user?.id || i} match={match} index={i} compact onRequest={onRequest} />)}</div> : <EmptyState icon="users" title="Your people are on the way" description="Add a few available times and profile details so students can find a good match with you." action={<button type="button" className="button button-outline" onClick={() => setView('availability')}>Add availability <Icon name="arrow" size={16} /></button>} />}</section>
+    <div className="home-columns"><section><SectionTitle eyebrow="PEOPLE FOR YOUR PACE" title="Students you could meet" action={<button type="button" className="link-button" onClick={() => setView('matches')}>See all <Icon name="arrow" size={16} /></button>} />{matches.length ? <div className="home-matches">{matches.slice(0, 2).map((match, i) => <MatchCard key={match.user?.id || i} match={match} index={i} compact onRequest={onRequest} onChat={onChat} />)}</div> : <EmptyState icon="users" title="Your people are on the way" description="Add a few available times and profile details so students can find a good match with you." action={<button type="button" className="button button-outline" onClick={() => setView('availability')}>Add availability <Icon name="arrow" size={16} /></button>} />}</section>
       <section><SectionTitle eyebrow="YOUR NEXT MOVE" title="Coming up" />{upcoming ? <div className="upcoming-card"><span className="upcoming-label">CONFIRMED WORKOUT</span><h3>{upcoming.activity}</h3><p>With {String(personId(upcoming.fromUser)) === String(me?.id) ? personName(upcoming.toUser) : personName(upcoming.fromUser)}</p><div className="upcoming-meta"><span><Icon name="calendar" size={17} />{upcoming.date ? formatDate(upcoming.date) : DAYS[upcoming.day]}</span><span><Icon name="clock" size={17} />{formatTime(upcoming.start)}–{formatTime(upcoming.end)}</span><span><Icon name="pin" size={17} />{upcoming.location}</span></div><button type="button" className="link-button" onClick={() => setView('meetups')}>View meetup <Icon name="arrow" size={16} /></button></div> : <div className="next-step-card"><span className="next-step-icon"><Icon name={nextSlot ? 'clock' : 'calendar'} size={25} /></span><h3>{nextSlot ? 'You have time to move' : 'Make room for a workout'}</h3><p>{nextSlot ? `Your next open window is ${formatDate(nextSlot.date)}, ${formatTime(nextSlot.start)}–${formatTime(nextSlot.end)}. Find someone to join you.` : 'Add the times you are free so we can show you students who are free then too.'}</p><button type="button" className="button button-outline" onClick={() => setView(nextSlot ? 'matches' : 'availability')}>{nextSlot ? 'Find a buddy' : 'Add availability'} <Icon name="arrow" size={16} /></button></div>}</section></div>
   </div>;
 }
 
-function Matches({ matches, slots, onRequest, setView, loading, onRefresh }) {
+function Matches({ matches, slots, onRequest, onChat, setView, loading, onRefresh }) {
   const [query, setQuery] = useState('');
   const [activity, setActivity] = useState('all');
   const filtered = matches.filter(match => {
@@ -224,7 +238,7 @@ function Matches({ matches, slots, onRequest, setView, loading, onRefresh }) {
   return <div className="page-content"><SectionTitle eyebrow="FIND YOUR PEOPLE" title="Workout buddies" description="Students who share your interests and have time to work out when you do." action={<button type="button" className="button button-subtle" onClick={onRefresh} disabled={loading}><Icon name="refresh" size={17} /> Refresh</button>} />
     {!slots.length && <div className="callout"><Icon name="info" size={20} /><div><strong>Add your free times to improve your matches.</strong><p>Matching works best when we know when you could meet.</p></div><button type="button" className="link-button" onClick={() => setView('availability')}>Add times <Icon name="arrow" size={16} /></button></div>}
     <div className="filter-bar"><label className="search-field"><span className="sr-only">Search buddies</span><Icon name="users" size={18} /><input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search people or activities" /></label><label className="select-field"><span className="sr-only">Filter by activity</span><select value={activity} onChange={e => setActivity(e.target.value)}><option value="all">All activities</option>{ACTIVITIES.map(item => <option key={item}>{item}</option>)}</select><Icon name="chevron" size={16} /></label></div>
-    {loading ? <div className="loading-panel">Finding people who fit your schedule…</div> : filtered.length ? <div className="match-grid">{filtered.map((match, i) => <MatchCard key={match.user?.id || i} match={match} index={i} onRequest={onRequest} />)}</div> : <EmptyState icon="users" title={matches.length ? 'No matches for these filters' : 'No buddies found just yet'} description={matches.length ? 'Try a different search or activity.' : 'Add more open times and activities, then check back as more students join.'} action={!matches.length && <button type="button" className="button button-primary" onClick={() => setView('availability')}>Add available times <Icon name="arrow" size={16} /></button>} />}
+    {loading ? <div className="loading-panel">Finding people who fit your schedule…</div> : filtered.length ? <div className="match-grid">{filtered.map((match, i) => <MatchCard key={match.user?.id || i} match={match} index={i} onRequest={onRequest} onChat={onChat} />)}</div> : <EmptyState icon="users" title={matches.length ? 'No matches for these filters' : 'No buddies found just yet'} description={matches.length ? 'Try a different search or activity.' : 'Add more open times and activities, then check back as more students join.'} action={!matches.length && <button type="button" className="button button-primary" onClick={() => setView('availability')}>Add available times <Icon name="arrow" size={16} /></button>} />}
   </div>;
 }
 
@@ -370,6 +384,7 @@ export default function App() {
   const [checking, setChecking] = useState(true);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [authOptions, setAuthOptions] = useState({ loading: true, netidEnabled: false, pilotAuthEnabled: false });
   const [me, setMe] = useState(null);
   const [view, setView] = useState('home');
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -378,6 +393,7 @@ export default function App() {
   const [meetups, setMeetups] = useState([]);
   const [loadingMatches, setLoadingMatches] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState(null);
+  const [activeChatId, setActiveChatId] = useState(null);
   const [meetupBusy, setMeetupBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   async function refreshData() {
@@ -391,6 +407,7 @@ export default function App() {
     if (failed) setNotice({ type: 'error', text: failed.reason.message || 'Some information could not load.' });
   }
   useEffect(() => { let active = true; (async () => { try { const data = await api('/api/me'); if (active) { setMe(data?.user || data?.me || data); await refreshData(); } } catch (e) { if (active && !/401|unauthorized|not authenticated|sign in to continue/i.test(e.message)) setAuthError(e.message); } finally { if (active) setChecking(false); } })(); return () => { active = false; }; }, []);
+  useEffect(() => { let active = true; api('/api/auth/netid/config').then(data => { if (active) setAuthOptions({ loading: false, netidEnabled: Boolean(data?.enabled), pilotAuthEnabled: Boolean(data?.pilotAuthEnabled) }); }).catch(() => { if (active) setAuthOptions({ loading: false, netidEnabled: false, pilotAuthEnabled: false }); }); return () => { active = false; }; }, []);
   useEffect(() => {
     if (!me?.id) return undefined;
     let active = true;
@@ -408,14 +425,15 @@ export default function App() {
   }, [me?.id]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [view]);
   async function auth(mode, values) { setAuthBusy(true); setAuthError(''); try { await api(`/api/auth/${mode === 'register' ? 'register' : 'login'}`, { method: 'POST', body: JSON.stringify(mode === 'register' ? values : { email: values.email, password: values.password }) }); const data = await api('/api/me'); setMe(data?.user || data?.me || data); await refreshData(); setView(mode === 'register' ? 'profile' : 'home'); } catch (e) { setAuthError(e.message); } finally { setAuthBusy(false); } }
-  async function logout() { try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* Clear the local session even if the network fails. */ } setMe(null); setSlots([]); setMatches([]); setMeetups([]); setView('home'); setMobileOpen(false); }
+  async function logout() { try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* Clear the local session even if the network fails. */ } setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null); setView('home'); setMobileOpen(false); }
   async function saveProfile(values) { const data = await api('/api/me', { method: 'PATCH', body: JSON.stringify(values) }); setMe(data?.user || data?.me || data); const buddyData = await api('/api/matches'); setMatches(buddyData.matches || []); setNotice({ type: 'success', text: 'Your profile is updated.' }); }
   async function saveSlots(next) { const data = await api('/api/availability', { method: 'PUT', body: JSON.stringify({ slots: next }) }); setSlots(data?.slots || next); const buddyData = await api('/api/matches'); setMatches(buddyData.matches || []); setNotice({ type: 'success', text: 'Your available times are saved.' }); }
   async function addImported(next) { await saveSlots(next); setView('availability'); }
   async function sendInvite(values) { setMeetupBusy(true); try { await api('/api/meetups', { method: 'POST', body: JSON.stringify(values) }); const data = await api('/api/meetups'); setMeetups(data.meetups || []); setSelectedMatch(null); setNotice({ type: 'success', text: 'Workout invite sent. You’ll see the reply in Meetups.' }); setView('meetups'); } finally { setMeetupBusy(false); } }
   async function updateMeetup(id, status) { setMeetupBusy(true); try { await api(`/api/meetups/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }) }); const data = await api('/api/meetups'); setMeetups(data.meetups || []); setNotice({ type: 'success', text: status === 'accepted' ? 'Workout confirmed!' : status === 'declined' ? 'Invite declined.' : 'Plan cancelled.' }); } catch (e) { setNotice({ type: 'error', text: e.message }); } finally { setMeetupBusy(false); } }
+  async function startChat(user) { try { const data = await api('/api/chats', { method: 'POST', body: JSON.stringify({ toUserId: user.id }) }); setActiveChatId(data.chat.id); setView('chats'); } catch (e) { setNotice({ type: 'error', text: e.message }); } }
   const pendingCount = meetups.filter(m => m.status === 'pending' && String(personId(m.toUser)) === String(me?.id)).length;
   if (checking) return <div className="startup"><Brand /><div className="spinner" aria-label="Loading" /><p>Getting your space ready…</p></div>;
-  if (!me) return <AuthScreen onAuth={auth} error={authError} busy={authBusy} />;
-  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><Sidebar view={view} setView={setView} me={me} onLogout={logout} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} pendingCount={pendingCount} /><main className="app-main" id="main-content" tabIndex={-1}><header className="topbar"><button type="button" className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button><div className="topbar-context"><span className="topbar-dot" /> UIUC STUDENT COMMUNITY</div><div className="topbar-right"><span className="topbar-message">Make today a good day to move.</span><Avatar name={me.name} size="small" /></div></header>{notice && <div className="notice-wrap"><Notice type={notice.type} onClose={() => setNotice(null)}>{notice.text}</Notice></div>}{view === 'home' && <Home me={me} slots={slots} matches={matches} meetups={meetups} setView={setView} onRequest={setSelectedMatch} />}{view === 'matches' && <Matches matches={matches} slots={slots} onRequest={setSelectedMatch} setView={setView} loading={loadingMatches} onRefresh={refreshData} />}{view === 'availability' && <Availability slots={slots} onSave={saveSlots} setView={setView} />}{view === 'import' && <ImportSchedule slots={slots} onAdd={addImported} />}{view === 'meetups' && <Meetups meetups={meetups} me={me} onStatus={updateMeetup} saving={meetupBusy} />}{view === 'profile' && <Profile me={me} onSave={saveProfile} />}</main>{selectedMatch && <RequestModal key={selectedMatch.user?.id || selectedMatch.id} match={selectedMatch} onClose={() => setSelectedMatch(null)} onSubmit={sendInvite} busy={meetupBusy} />}</div>;
+  if (!me) return <AuthScreen onAuth={auth} error={authError} busy={authBusy} authOptions={authOptions} />;
+  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><Sidebar view={view} setView={setView} me={me} onLogout={logout} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} pendingCount={pendingCount} /><main className="app-main" id="main-content" tabIndex={-1}><header className="topbar"><button type="button" className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button><div className="topbar-context"><span className="topbar-dot" /> UIUC STUDENT COMMUNITY</div><div className="topbar-right"><span className="topbar-message">Make today a good day to move.</span><Avatar name={me.name} size="small" /></div></header>{notice && <div className="notice-wrap"><Notice type={notice.type} onClose={() => setNotice(null)}>{notice.text}</Notice></div>}{view === 'home' && <Home me={me} slots={slots} matches={matches} meetups={meetups} setView={setView} onRequest={setSelectedMatch} onChat={startChat} />}{view === 'matches' && <Matches matches={matches} slots={slots} onRequest={setSelectedMatch} onChat={startChat} setView={setView} loading={loadingMatches} onRefresh={refreshData} />}{view === 'now' && <PresencePage me={me} api={api} onChat={startChat} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'chats' && <ChatsPage me={me} api={api} activeChatId={activeChatId} setActiveChatId={setActiveChatId} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'availability' && <Availability slots={slots} onSave={saveSlots} setView={setView} />}{view === 'import' && <ImportSchedule slots={slots} onAdd={addImported} />}{view === 'meetups' && <Meetups meetups={meetups} me={me} onStatus={updateMeetup} saving={meetupBusy} />}{view === 'profile' && <Profile me={me} onSave={saveProfile} />}</main>{selectedMatch && <RequestModal key={selectedMatch.user?.id || selectedMatch.id} match={selectedMatch} onClose={() => setSelectedMatch(null)} onSubmit={sendInvite} busy={meetupBusy} />}</div>;
 }

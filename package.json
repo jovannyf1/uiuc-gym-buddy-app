@@ -1,0 +1,21 @@
+{
+  "name": "uiuc-gym-buddy-app",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n api,web -c blue,green \"node --watch server/index.js\" \"npm --prefix client run dev\"",
+    "start": "node server/index.js",
+    "build": "npm --prefix client run build",
+    "test": "node --test server/*.test.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.6.1",
+    "express": "^4.21.2",
+    "ical.js": "^2.2.1",
+    "multer": "^2.0.2"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1"
+  }
+}

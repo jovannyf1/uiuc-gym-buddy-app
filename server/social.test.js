@@ -4,6 +4,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
+import { chicagoNow } from './core.js';
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'gym-buddy-social-'));
 process.env.DATA_DIR = dataDir;
@@ -116,6 +117,39 @@ test('chats require compatible users, protect messages, and limit rapid sends', 
     method: 'POST', body: { text: 'x'.repeat(1001) },
   })).status, 400);
   assert.equal((await request(alice, '/api/chats')).body.chats[0].lastMessage.text, 'Meet at ARC?');
+});
+
+test('workout invitations are rate limited per sender and per recipient', async () => {
+  const sender = student('Drew', 10);
+  const target = student('Eli', 11);
+  await request(sender, '/api/availability', {
+    method: 'PUT', body: { slots: [{ day: 0, start: '17:00', end: '18:00' }] },
+  });
+  await request(target, '/api/availability', {
+    method: 'PUT', body: { slots: [{ day: 0, start: '17:00', end: '18:00' }] },
+  });
+  const today = new Date(`${chicagoNow().date}T12:00:00Z`);
+  const weekday = (today.getUTCDay() + 6) % 7;
+  today.setUTCDate(today.getUTCDate() + ((0 - weekday + 7) % 7 || 7) + 7);
+  const date = today.toISOString().slice(0, 10);
+  const invitation = {
+    toUserId: target.id, activity: 'Strength training', date, day: 0,
+    start: '17:00', end: '18:00', location: 'ARC', note: '',
+  };
+  const addPastInvitation = (recipientId) => db.prepare(`INSERT INTO meetups
+    (from_user_id, to_user_id, activity, date, day, start, end, location, status, created_at)
+    VALUES (?, ?, 'Strength training', ?, 0, '17:00', '18:00', 'ARC', 'cancelled', ?)`)
+    .run(sender.id, recipientId, date, new Date().toISOString());
+
+  for (let index = 0; index < 3; index += 1) addPastInvitation(target.id);
+  assert.equal((await request(sender, '/api/meetups', { method: 'POST', body: invitation })).status, 429);
+
+  const otherRecipients = Array.from({ length: 10 }, (_, index) => student(`Other ${index}`, 20 + index));
+  for (const recipient of otherRecipients) addPastInvitation(recipient.id);
+  assert.equal((await request(sender, '/api/meetups', { method: 'POST', body: invitation })).status, 429);
+  for (const user of [sender, target, ...otherRecipients]) {
+    db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+  }
 });
 
 test('blocking suppresses discovery and contact; reports are persisted and rate limited', async () => {

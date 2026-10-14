@@ -26,7 +26,7 @@ To run the built version, run `npm run build` followed by `npm start`, then open
 
 The importer uses the next seven days in the `America/Chicago` timezone to propose a **recurring weekly** availability template. One-off commitments can change, so students should check and update their availability before arranging a meetup. Only the free windows a student chooses to save are used for matching. Other students see shared openings, not private calendar commitments.
 
-Chat messages and profiles are stored in the app database. A student can block another person; blocks hide both students from each other's discovery and prevent new messages and invitations. Reports are recorded, but a human review process is still needed before opening the app to the wider campus.
+Chat messages and profiles are stored in the app database. A student can block another person; blocks hide both students from each other's discovery and prevent new messages and invitations. To reduce unwanted invites, a student can send up to 10 workout invitations per day, with up to 3 to the same person. Reports are recorded, but a human review process is still needed before opening the app to the wider campus.
 
 ## iPhone and web
 

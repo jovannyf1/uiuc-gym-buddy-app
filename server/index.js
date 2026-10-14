@@ -72,6 +72,9 @@ db.exec(`
 `);
 
 const SESSION_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+const DAY_MS = 24 * 60 * 60 * 1000;
+const MAX_MEETUPS_PER_DAY = 10;
+const MAX_MEETUPS_TO_ONE_STUDENT_PER_DAY = 3;
 const SESSION_COOKIE = 'uiuc_gym_buddy_session';
 const netidConfigured = [
   process.env.ILLINOIS_OIDC_ISSUER, process.env.ILLINOIS_OIDC_CLIENT_ID,
@@ -443,7 +446,17 @@ app.post('/api/meetups', requireAuth, (req, res, next) => {
       || conflicts(candidate.id, date, req.body.start, req.body.end)) {
       throw new InputError('One of you already has a workout planned for that time.', 409);
     }
-    const createdAt = new Date().toISOString();
+    const nowMs = Date.now();
+    const since = new Date(nowMs - DAY_MS).toISOString();
+    const sentToday = db.prepare('SELECT COUNT(*) AS total FROM meetups WHERE from_user_id = ? AND created_at >= ?')
+      .get(req.user.id, since).total;
+    const sentToStudentToday = db.prepare(`SELECT COUNT(*) AS total FROM meetups
+      WHERE from_user_id = ? AND to_user_id = ? AND created_at >= ?`)
+      .get(req.user.id, targetId, since).total;
+    if (sentToday >= MAX_MEETUPS_PER_DAY || sentToStudentToday >= MAX_MEETUPS_TO_ONE_STUDENT_PER_DAY) {
+      throw new InputError('You have sent the daily limit of workout invitations. Try again tomorrow.', 429);
+    }
+    const createdAt = new Date(nowMs).toISOString();
     const result = db.prepare(`INSERT INTO meetups
       (from_user_id, to_user_id, activity, date, day, start, end, location, note, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)

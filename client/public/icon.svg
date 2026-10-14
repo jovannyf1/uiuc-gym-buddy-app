@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Gym Buddy dumbbell">
+  <rect width="512" height="512" rx="112" fill="#101f2b"/>
+  <circle cx="256" cy="256" r="184" fill="#c44828"/>
+  <g transform="rotate(-42 256 256)" fill="#fff">
+    <rect x="141" y="244" width="230" height="24" rx="12"/>
+    <rect x="133" y="194" width="36" height="124" rx="13"/>
+    <rect x="343" y="194" width="36" height="124" rx="13"/>
+    <rect x="105" y="218" width="29" height="76" rx="12"/>
+    <rect x="378" y="218" width="29" height="76" rx="12"/>
+  </g>
+</svg>

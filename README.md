@@ -35,3 +35,7 @@ The importer uses the next seven days in the `America/Chicago` timezone to propo
 - Responsive keyboard-accessible web interface
 
 This is a local pilot, not a public campus launch. Before inviting real students to use a hosted version, add mailbox verification, HTTPS hosting, user reporting/moderation, and a clear privacy/retention policy. Live Google/Outlook account syncing would require OAuth setup; Apple Calendar has no equivalent general web sign-in, so `.ics` export is the supported path here.
+
+## Continue in a new Codex chat
+
+Use [this GitHub repository](https://github.com/jovannyf1/uiuc-gym-buddy-app) as the source of truth. In a new chat, share that link and describe the change you want, for example: “Continue UIUC Gym Buddy App from this repository. Add [feature] and put the finished work on GitHub.” `AGENTS.md` gives the next chat the project goal, scope, and checks.

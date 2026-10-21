@@ -57,14 +57,14 @@ struct ProfileView: View {
                 if saved { Text("Profile saved.").foregroundStyle(.green) }
             }
             Section("Account") {
-                if let email = store.currentUser?.email { LabeledContent("Illinois email", value: email) }
+                if let email = store.currentUser?.email { LabeledContent("Email", value: email) }
                 Button("Server settings", systemImage: "server.rack") { showingServer = true }
                 Button("Sign out", role: .destructive) {
                     Task { await store.logout() }
                 }
             }
             if !store.blockedUsers.isEmpty {
-                Section("Blocked students") {
+                Section("Blocked members") {
                     ForEach(store.blockedUsers) { user in
                         HStack {
                             Text(user.name)

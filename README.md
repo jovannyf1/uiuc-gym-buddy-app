@@ -1,6 +1,6 @@
 # UIUC Gym Buddy App
 
-UIUC Gym Buddy App helps UIUC students find another student who is free to go to the gym at the same time. Students can customize a profile, enter recurring free times by hand or upload a calendar export or schedule screenshot, review suggested free windows, find a compatible buddy, chat, and send a dated gym meetup invitation. A student can optionally show that they are working out now at a chosen campus gym; that status expires automatically. The app does **not** track gym busyness or GPS location.
+UIUC Gym Buddy App helps people near UIUC find a workout partner who is free to go to the gym at the same time. Members can customize a profile, enter recurring free times by hand or upload a calendar export or schedule screenshot, review suggested free windows, find a compatible buddy, chat, and send a dated gym meetup invitation. A member can optionally show that they are working out now at a chosen campus gym; that status expires automatically. The app does **not** track gym busyness or GPS location. Email signup verifies an inbox, not student status.
 
 ## Run it locally
 
@@ -32,9 +32,15 @@ Chat messages and profiles are stored in the app database. A student can block a
 
 The responsive website includes an installable Home Screen experience. After it is hosted over HTTPS, open it in Safari on an iPhone and choose **Share → Add to Home Screen**. The site and the native app use the same server and student data.
 
+To publish the website on Vercel while keeping its accounts and chats in a persistent database, follow [the Vercel hosting guide](docs/VERCEL.md). The website needs a separate HTTPS API service with a persistent `/app/data` volume.
+
 A separate native SwiftUI iPhone app lives in [`ios/`](ios/). Its screens use the real API for profiles, schedule review, matching, presence, chat, and invitations. See [`ios/SETUP.md`](ios/SETUP.md) for Xcode, Apple signing, and iPhone setup. This repository includes an iOS Simulator build check on GitHub Actions; a physical iPhone build still needs a Mac with Xcode and an Apple signing account.
 
-## Illinois NetID sign-in
+## Sign-in choices
+
+Verified email and password sign-in is available on the website and in the native iPhone app when the server has `RESEND_API_KEY`, `EMAIL_FROM`, and `PUBLIC_APP_URL` configured. A person can sign up with **any email address they can verify**, set a password, open the verification link in their inbox, and then sign in. Password reset also uses an emailed link. Set up a verified sending domain with Resend before inviting classmates; the app never stores the email service key in the website or iPhone app. Email verification proves control of that mailbox, **not** enrollment at UIUC. The local pilot account form is separate and remains disabled in production once verified email sign-in is configured.
+
+Illinois NetID is a separate sign-in option. It is not required for an email-and-password account.
 
 The app has an OpenID Connect sign-in flow for Illinois NetID on the web and in the native iPhone app. It is **not active** until a University of Illinois identity application is registered and the four `ILLINOIS_OIDC_*` settings in [`.env.example`](.env.example) are configured. The app never asks for or stores a NetID password. The login button is hidden until sign-in is configured. University identity staff must confirm the approved issuer, app registration, redirect URI, and which claim establishes active student eligibility; a valid Illinois account alone does not establish that someone is a current student. Existing unverified pilot accounts require a reviewed migration before their data can be used with NetID sign-in.
 
@@ -42,14 +48,14 @@ Illinois Technology Services describes [Shibboleth and Entra ID as supported SSO
 
 ## What works in this version
 
-- Account registration and sign-in, saved profiles, and optional partner-gender preferences
+- Verified email registration, sign-in, password reset, saved profiles, and optional partner-gender preferences
 - Manual weekly availability and schedule-import suggestions
 - Matches based on shared free windows and gym locations
 - Dated meetup invitations with accept, decline, and cancel actions
 - Private chats with compatible students, opt-in expiring working-out-now status, and block/report controls
 - Responsive web interface with iPhone Home Screen installation, plus a native SwiftUI app source project
 
-This is a local pilot, not a public campus launch. To make it usable by classmates, deploy the server over HTTPS with a persistent SQLite volume, configure the screenshot AI key, and arrange approved Illinois NetID app registration or a tightly controlled class pilot. The [`Dockerfile`](Dockerfile) builds the web client and API together; persist `/app/data` when hosting. Before a wider launch, add human review of reports, a privacy/retention policy, and student-eligibility checks, then test the experience with real students and assistive technology. Live Google/Outlook account syncing would require OAuth setup; Apple Calendar has no equivalent general web sign-in, so `.ics` export is the supported path here.
+The source includes a class pilot; a public deployment is not live yet. To make it usable by classmates, deploy the website and an HTTPS API with a persistent SQLite volume, then configure verified email delivery. The screenshot AI path needs an `OPENAI_API_KEY` if it will be used. The [`Dockerfile`](Dockerfile) builds the web client and API together; persist `/app/data` when hosting. Before a wider campus launch, add human review of reports, a privacy/retention policy, and student-eligibility checks, then test the experience with real students and assistive technology. Live Google/Outlook account syncing would require OAuth setup; Apple Calendar has no equivalent general web sign-in, so `.ics` export is the supported path here.
 
 ## Continue in a new Codex chat
 

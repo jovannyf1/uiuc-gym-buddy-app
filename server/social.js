@@ -14,10 +14,10 @@ function objectWithOnlyKeys(value, keys) {
 
 function positiveId(value) {
   if (typeof value !== 'number' && (typeof value !== 'string' || !/^[1-9]\d*$/.test(value))) {
-    throw new InputError('Choose a valid student or chat.');
+    throw new InputError('Choose a valid member or chat.');
   }
   const id = Number(value);
-  if (!Number.isSafeInteger(id) || id < 1) throw new InputError('Choose a valid student or chat.');
+  if (!Number.isSafeInteger(id) || id < 1) throw new InputError('Choose a valid member or chat.');
   return id;
 }
 
@@ -65,7 +65,8 @@ function messageFor(row) {
 
 // Social data stays on the server. Only explicitly published, unexpired gym
 // presence is discoverable; private weekly availability is never returned here.
-export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequired = false }) {
+export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityRequired = false,
+  trustedUser = () => true }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS workout_presence (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -128,16 +129,16 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
   const deleteExpiredPresence = db.prepare('DELETE FROM workout_presence WHERE expires_at <= ?');
   deleteExpiredPresence.run(Date.now());
 
-  function hasNetidIdentity(userId) {
-    // netid_identities is initialized later in index.js, before requests run.
-    return !netidIdentityRequired || Boolean(db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(userId));
-  }
-
-  function requireNetidIdentity(userId) {
-    if (!hasNetidIdentity(userId)) {
-      throw new InputError('Illinois NetID sign-in is required.', 403);
+  function requireVerifiedIdentity(userId) {
+    if (!trustedUser(userId)) {
+      throw new InputError('A verified account is required.', 403);
     }
   }
+
+  const trustedPredicate = column => verifiedIdentityRequired
+    ? `(EXISTS (SELECT 1 FROM netid_identities n WHERE n.user_id = ${column})
+      OR EXISTS (SELECT 1 FROM email_identities e WHERE e.user_id = ${column} AND e.verified_at IS NOT NULL))`
+    : '1 = 1';
 
   function isBlocked(firstId, secondId) {
     return Boolean(blocked.get(firstId, secondId, secondId, firstId));
@@ -148,7 +149,7 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
     if (!chat || (chat.user_a_id !== userId && chat.user_b_id !== userId)) {
       throw new InputError('Chat not found.', 404);
     }
-    if (!hasNetidIdentity(chat.user_a_id) || !hasNetidIdentity(chat.user_b_id)) {
+    if (!trustedUser(chat.user_a_id) || !trustedUser(chat.user_b_id)) {
       throw new InputError('Chat not found.', 404);
     }
     return chat;
@@ -165,7 +166,7 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
   }
 
   app.get('/api/presence/me', requireAuth, (req, res) => {
-    requireNetidIdentity(req.user.id);
+    requireVerifiedIdentity(req.user.id);
     const now = Date.now();
     deleteExpiredPresence.run(now);
     const row = db.prepare('SELECT * FROM workout_presence WHERE user_id = ? AND expires_at > ?')
@@ -175,7 +176,7 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
 
   app.put('/api/presence', requireAuth, (req, res, next) => {
     try {
-      requireNetidIdentity(req.user.id);
+      requireVerifiedIdentity(req.user.id);
       if (!objectWithOnlyKeys(req.body, ['activity', 'location', 'durationMinutes'])) {
         throw new InputError('Choose a gym and workout activity.');
       }
@@ -209,14 +210,13 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
   });
 
   app.get('/api/presence/nearby', requireAuth, (req, res) => {
-    requireNetidIdentity(req.user.id);
+    requireVerifiedIdentity(req.user.id);
     const now = Date.now();
     deleteExpiredPresence.run(now);
     const people = [];
     const rows = db.prepare(`SELECT p.user_id, p.activity, p.location, p.expires_at
       FROM workout_presence p
-      ${netidIdentityRequired ? 'JOIN netid_identities n ON n.user_id = p.user_id' : ''}
-      WHERE p.user_id != ? AND p.expires_at > ?
+      WHERE p.user_id != ? AND p.expires_at > ? AND ${trustedPredicate('p.user_id')}
       ORDER BY p.updated_at DESC LIMIT 200`).all(req.user.id, now);
     for (const row of rows) {
       if (isBlocked(req.user.id, row.user_id)) continue;
@@ -231,11 +231,10 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
   });
 
   app.get('/api/chats', requireAuth, (req, res) => {
-    requireNetidIdentity(req.user.id);
+    requireVerifiedIdentity(req.user.id);
     const rows = db.prepare(`SELECT c.* FROM chats c
-      ${netidIdentityRequired ? `JOIN netid_identities a ON a.user_id = c.user_a_id
-      JOIN netid_identities b ON b.user_id = c.user_b_id` : ''}
-      WHERE c.user_a_id = ? OR c.user_b_id = ?
+      WHERE (c.user_a_id = ? OR c.user_b_id = ?)
+        AND ${trustedPredicate('c.user_a_id')} AND ${trustedPredicate('c.user_b_id')}
       ORDER BY c.updated_at_ms DESC, c.id DESC LIMIT 100`).all(req.user.id, req.user.id);
     const chats = rows.filter(row => !isBlocked(row.user_a_id, row.user_b_id))
       .map(row => chatFor(row, req.user.id));
@@ -244,15 +243,15 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
 
   app.post('/api/chats', requireAuth, (req, res, next) => {
     try {
-      requireNetidIdentity(req.user.id);
-      if (!objectWithOnlyKeys(req.body, ['toUserId'])) throw new InputError('Choose a student to chat with.');
+      requireVerifiedIdentity(req.user.id);
+      if (!objectWithOnlyKeys(req.body, ['toUserId'])) throw new InputError('Choose a member to chat with.');
       const targetId = positiveId(req.body.toUserId);
-      if (targetId === req.user.id) throw new InputError('Choose another student to chat with.');
+      if (targetId === req.user.id) throw new InputError('Choose another member to chat with.');
       const target = userById.get(targetId);
-      if (!target || !hasNetidIdentity(targetId)) throw new InputError('This student is unavailable.', 404);
-      if (isBlocked(req.user.id, targetId)) throw new InputError('You cannot contact this student.', 403);
+      if (!target || !trustedUser(targetId)) throw new InputError('This member is unavailable.', 404);
+      if (isBlocked(req.user.id, targetId)) throw new InputError('You cannot contact this member.', 403);
       if (!compatibleProfiles(req.user, target)) {
-        throw new InputError('You and this student need a shared activity and gym to chat.', 403);
+        throw new InputError('You and this member need a shared activity and gym to chat.', 403);
       }
       const [firstId, secondId] = [req.user.id, targetId].sort((a, b) => a - b);
       const existing = db.prepare('SELECT * FROM chats WHERE user_a_id = ? AND user_b_id = ?')
@@ -297,9 +296,9 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
         throw new InputError('Messages must be between 1 and 1000 characters.');
       }
       const otherUserId = chat.user_a_id === req.user.id ? chat.user_b_id : chat.user_a_id;
-      if (isBlocked(req.user.id, otherUserId)) throw new InputError('You cannot contact this student.', 403);
+      if (isBlocked(req.user.id, otherUserId)) throw new InputError('You cannot contact this member.', 403);
       if (!compatibleProfiles(req.user, userById.get(otherUserId))) {
-        throw new InputError('You and this student no longer have a shared activity and gym.', 403);
+        throw new InputError('You and this member no longer have a shared activity and gym.', 403);
       }
       const nowMs = Date.now();
       const recent = db.prepare(`SELECT created_at_ms FROM chat_messages
@@ -327,7 +326,7 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
     try {
       const targetId = positiveId(req.params.id);
       if (targetId === req.user.id || !userById.get(targetId)) {
-        throw new InputError('Choose another student to block.');
+        throw new InputError('Choose another member to block.');
       }
       db.exec('BEGIN IMMEDIATE');
       try {
@@ -351,7 +350,7 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
     const rows = db.prepare(`SELECT u.* FROM user_blocks b
       JOIN users u ON u.id = b.blocked_user_id
       WHERE b.blocker_user_id = ? ORDER BY u.name, u.id`).all(req.user.id);
-    res.json({ blockedUsers: rows.filter(row => hasNetidIdentity(row.id)).map(publicProfile) });
+    res.json({ blockedUsers: rows.filter(row => trustedUser(row.id)).map(publicProfile) });
   });
 
   app.delete('/api/users/:id/block', requireAuth, (req, res, next) => {
@@ -367,7 +366,7 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
     try {
       const targetId = positiveId(req.params.id);
       if (targetId === req.user.id || !userById.get(targetId)) {
-        throw new InputError('Choose another student to report.');
+        throw new InputError('Choose another member to report.');
       }
       if (!objectWithOnlyKeys(req.body, ['reason', 'details'])
         || !['harassment', 'spam', 'unsafe', 'other'].includes(req.body.reason)) {
@@ -381,7 +380,7 @@ export function registerSocialRoutes({ app, db, requireAuth, netidIdentityRequir
       const recent = db.prepare(`SELECT 1 FROM user_reports
         WHERE reporter_user_id = ? AND reported_user_id = ? AND created_at_ms > ? LIMIT 1`)
         .get(req.user.id, targetId, nowMs - DAY_MS);
-      if (recent) throw new InputError('You have already reported this student today.', 429);
+      if (recent) throw new InputError('You have already reported this member today.', 429);
       db.prepare(`INSERT INTO user_reports
         (reporter_user_id, reported_user_id, reason, details, created_at, created_at_ms)
         VALUES (?, ?, ?, ?, ?, ?)`)

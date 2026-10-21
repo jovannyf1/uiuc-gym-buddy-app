@@ -20,7 +20,7 @@ struct SafetyMenu: View {
         }
         .sheet(isPresented: $showingReport) { ReportSheet(user: user) }
         .confirmationDialog("Block \(user.name)?", isPresented: $showingBlockConfirmation) {
-            Button("Block student", role: .destructive) {
+            Button("Block member", role: .destructive) {
                 Task {
                     do { try await store.blockUser(user.id) }
                     catch { store.errorMessage = error.localizedDescription }
@@ -71,7 +71,7 @@ struct ReportSheet: View {
                         .disabled(sending || details.count > 500)
                 }
             }
-            .navigationTitle("Report student")
+            .navigationTitle("Report member")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Cancel") { dismiss() } } }
         }

@@ -3,6 +3,9 @@
 .netid-login{display:grid;gap:14px}
 .netid-login .button{min-height:54px}
 .netid-login p{font-size:13px;color:var(--muted);margin:0}
+.auth-divider{display:flex;align-items:center;gap:12px;margin:22px 0;color:var(--muted);font-size:12px;font-weight:700;text-align:center}.auth-divider:before,.auth-divider:after{content:'';flex:1;border-top:1px solid #d9e0dd}
+.auth-email-note{padding:11px 13px;margin:0 0 17px;border-radius:10px;background:#edf3f1;color:#49625b;font-size:12px;line-height:1.5}
+.auth-followup{display:grid;gap:14px;padding:16px 0}.auth-followup p{margin:0;color:var(--muted);line-height:1.5}.auth-followup .link-button,.auth-helper{justify-self:start}.auth-status{color:var(--muted);font-size:13px}
 .auth-pending{border:1px solid #d8e1dd;border-radius:13px;background:#f5f8f6;padding:21px;color:var(--muted)}
 .auth-pending svg{color:var(--green)}
 .auth-pending h3{color:var(--ink);font-size:21px;margin:10px 0 4px}

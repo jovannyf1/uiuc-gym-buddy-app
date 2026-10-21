@@ -151,6 +151,8 @@ struct LoginPayload: Encodable {
     let password: String
 }
 
+struct EmailResendPayload: Encodable { let email: String }
+
 struct ProfilePayload: Encodable {
     let name: String
     let gender: String
@@ -204,6 +206,15 @@ struct OKEnvelope: Decodable { let ok: Bool }
 struct NetIDConfigEnvelope: Decodable {
     let enabled: Bool
     let pilotAuthEnabled: Bool
+    let emailAuthEnabled: Bool?
+}
+struct EmailRegistrationEnvelope: Decodable {
+    let verificationRequired: Bool
+    let message: String
+}
+struct EmailAcknowledgmentEnvelope: Decodable {
+    let ok: Bool?
+    let message: String?
 }
 struct BlocksEnvelope: Decodable { let blockedUsers: [UserProfile] }
 struct BlockEnvelope: Decodable { let blocked: Bool }

@@ -147,6 +147,7 @@ final class AppStore: ObservableObject {
     @Published var errorMessage: String?
     @Published var netIDAvailable = false
     @Published var pilotAuthAvailable = false
+    @Published var emailAuthAvailable = false
 
     private var api: APIClient
     private let netIDBrowser = NetIDBrowser()
@@ -180,6 +181,7 @@ final class AppStore: ObservableObject {
         blockedUsers = []
         netIDAvailable = false
         pilotAuthAvailable = false
+        emailAuthAvailable = false
     }
 
     func restoreSession() async {
@@ -200,6 +202,7 @@ final class AppStore: ObservableObject {
         let result: NetIDConfigEnvelope? = try? await api.request("api/auth/netid/config")
         netIDAvailable = result?.enabled == true
         pilotAuthAvailable = result?.pilotAuthEnabled == true
+        emailAuthAvailable = result?.emailAuthEnabled == true
     }
 
     func loginWithNetID() async throws {
@@ -238,6 +241,42 @@ final class AppStore: ObservableObject {
         let result: UserEnvelope = try await api.request("api/auth/login", method: "POST", body: body)
         currentUser = result.user
         try await refreshAll()
+    }
+
+    func registerEmail(name: String, email: String, password: String) async throws -> String {
+        let body = try api.encode(RegisterPayload(
+            name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            email: email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            password: password
+        ))
+        let result: EmailRegistrationEnvelope = try await api.request("api/auth/email/register", method: "POST", body: body)
+        return result.message
+    }
+
+    func loginWithEmail(email: String, password: String) async throws {
+        let body = try api.encode(LoginPayload(
+            email: email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            password: password
+        ))
+        let result: UserEnvelope = try await api.request("api/auth/email/login", method: "POST", body: body)
+        currentUser = result.user
+        try await refreshAll()
+    }
+
+    func resendEmailVerification(email: String) async throws -> String {
+        let body = try api.encode(EmailResendPayload(
+            email: email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        ))
+        let result: EmailAcknowledgmentEnvelope = try await api.request("api/auth/email/resend", method: "POST", body: body)
+        return result.message ?? "If this account needs verification, a new link is on its way. Check your inbox and spam folder."
+    }
+
+    func requestEmailPasswordReset(email: String) async throws -> String {
+        let body = try api.encode(EmailResendPayload(
+            email: email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        ))
+        let result: EmailAcknowledgmentEnvelope = try await api.request("api/auth/email/reset/request", method: "POST", body: body)
+        return result.message ?? "If an account exists for this email, a password-reset link is on its way. Check your inbox and spam folder."
     }
 
     func logout() async {

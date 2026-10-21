@@ -74,7 +74,7 @@ struct BuddiesView: View {
 
             Section("Matches for your free time") {
                 if store.matches.isEmpty {
-                    EmptyMessage(symbol: "person.2", title: "No matches yet", detail: "Add free times and choose workouts and gyms in your profile. Matches appear when another student has compatible availability.")
+                    EmptyMessage(symbol: "person.2", title: "No matches yet", detail: "Add free times and choose workouts and gyms in your profile. Matches appear when another member has compatible availability.")
                 } else {
                     ForEach(store.matches) { match in
                         VStack(alignment: .leading, spacing: 9) {

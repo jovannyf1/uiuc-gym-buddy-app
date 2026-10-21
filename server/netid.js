@@ -89,10 +89,29 @@ function getOrCreateUser(db, claims) {
   const subject = `${claims.iss}\u0000${claims.sub}`;
   const existingIdentity = db.prepare('SELECT user_id FROM netid_identities WHERE subject = ?').get(subject);
   if (existingIdentity) return existingIdentity.user_id;
-  if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) {
-    // Local pilot addresses were never verified. Linking by email would let an
-    // unverified pilot account take over an Illinois identity or vice versa.
-    throw new InputError('This Illinois email already has a pilot account. Account migration is required before NetID sign-in.', 409);
+  const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  if (existingUser) {
+    // Mailbox verification and campus OIDC both establish control of this
+    // Illinois address. Unverified pilot and pending-email accounts cannot
+    // be linked by matching a typed address.
+    const verified = db.prepare(`SELECT 1 FROM email_identities
+      WHERE user_id = ? AND verified_at IS NOT NULL`).get(existingUser.id);
+    if (!verified) {
+      throw new InputError('This Illinois email has an unverified account. Account migration is required before NetID sign-in.', 409);
+    }
+    if (db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(existingUser.id)) {
+      throw new InputError('This account is already linked to a different Illinois identity. Account review is required.', 409);
+    }
+    try {
+      db.prepare('INSERT INTO netid_identities (subject, user_id, created_at) VALUES (?, ?, ?)')
+        .run(subject, existingUser.id, Date.now());
+    } catch (error) {
+      if (String(error.message).includes('UNIQUE')) {
+        throw new InputError('This Illinois identity is already linked to another account.', 409);
+      }
+      throw error;
+    }
+    return existingUser.id;
   }
   const displayName = String(claims.name || claims.given_name || email.split('@')[0]).trim().slice(0, 80) || email.split('@')[0];
   db.exec('BEGIN IMMEDIATE');
@@ -109,7 +128,8 @@ function getOrCreateUser(db, claims) {
   }
 }
 
-export function registerNetidRoutes({ app, db, createSession, profile, pilotAuthEnabled = true }) {
+export function registerNetidRoutes({ app, db, createSession, profile,
+  pilotAuthEnabled = true, emailAuthEnabled = false }) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS netid_identities (
       subject TEXT PRIMARY KEY,
@@ -141,7 +161,9 @@ export function registerNetidRoutes({ app, db, createSession, profile, pilotAuth
   };
   const handle = fn => (req, res, next) => Promise.resolve(fn(req, res)).catch(next);
 
-  app.get('/api/auth/netid/config', (req, res) => res.json({ enabled: Boolean(settings()), pilotAuthEnabled }));
+  app.get('/api/auth/netid/config', (req, res) => res.json({
+    enabled: Boolean(settings()), pilotAuthEnabled, emailAuthEnabled,
+  }));
 
   app.get('/api/auth/netid/start', handle(async (req, res) => {
     const configured = settings();

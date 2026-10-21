@@ -32,13 +32,13 @@ Chat messages and profiles are stored in the app database. A student can block a
 
 The responsive website includes an installable Home Screen experience. After it is hosted over HTTPS, open it in Safari on an iPhone and choose **Share → Add to Home Screen**. The site and the native app use the same server and student data.
 
-To publish the website on Vercel while keeping its accounts and chats in a persistent database, follow [the Vercel hosting guide](docs/VERCEL.md). The website needs a separate HTTPS API service with a persistent `/app/data` volume.
+To publish the website on Vercel with saved accounts and chats, follow [the Vercel and Supabase hosting guide](docs/VERCEL.md). The free setup runs the website and API on Vercel and stores persistent data in Supabase Postgres; no separate paid server is needed.
 
 A separate native SwiftUI iPhone app lives in [`ios/`](ios/). Its screens use the real API for profiles, schedule review, matching, presence, chat, and invitations. See [`ios/SETUP.md`](ios/SETUP.md) for Xcode, Apple signing, and iPhone setup. This repository includes an iOS Simulator build check on GitHub Actions; a physical iPhone build still needs a Mac with Xcode and an Apple signing account.
 
 ## Sign-in choices
 
-Verified email and password sign-in is available on the website and in the native iPhone app when the server has `RESEND_API_KEY`, `EMAIL_FROM`, and `PUBLIC_APP_URL` configured. A person can sign up with **any email address they can verify**, set a password, open the verification link in their inbox, and then sign in. Password reset also uses an emailed link. Set up a verified sending domain with Resend before inviting classmates; the app never stores the email service key in the website or iPhone app. Email verification proves control of that mailbox, **not** enrollment at UIUC. The local pilot account form is separate and remains disabled in production once verified email sign-in is configured.
+Verified email and password sign-in is available on the website and in the native iPhone app when a mail provider is configured with `EMAIL_FROM`, `PUBLIC_APP_URL`, and either SMTP credentials or `RESEND_API_KEY`. A person can sign up with **any email address they can verify**, set a password, open the verification link in their inbox, and then sign in. Password reset also uses an emailed link. The app never stores the email service password in the website or iPhone app. Email verification proves control of that mailbox, **not** enrollment at UIUC. The local pilot account form is separate and remains disabled in production once verified email sign-in is configured.
 
 Illinois NetID is a separate sign-in option. It is not required for an email-and-password account.
 
@@ -55,7 +55,7 @@ Illinois Technology Services describes [Shibboleth and Entra ID as supported SSO
 - Private chats with compatible students, opt-in expiring working-out-now status, and block/report controls
 - Responsive web interface with iPhone Home Screen installation, plus a native SwiftUI app source project
 
-The source includes a class pilot; a public deployment is not live yet. To make it usable by classmates, deploy the website and an HTTPS API with a persistent SQLite volume, then configure verified email delivery. The screenshot AI path needs an `OPENAI_API_KEY` if it will be used. The [`Dockerfile`](Dockerfile) builds the web client and API together; persist `/app/data` when hosting. Before a wider campus launch, add human review of reports, a privacy/retention policy, and student-eligibility checks, then test the experience with real students and assistive technology. Live Google/Outlook account syncing would require OAuth setup; Apple Calendar has no equivalent general web sign-in, so `.ics` export is the supported path here.
+The source includes a class pilot; a public deployment is not live yet. To make it usable by classmates, create the free Vercel and Supabase projects, set the server-only database and email variables, then test the public address. The screenshot AI path needs an `OPENAI_API_KEY` if it will be used and may incur separate API charges. Before a wider campus launch, add human review of reports, a privacy/retention policy, and student-eligibility checks, then test the experience with real students and assistive technology. Live Google/Outlook account syncing would require OAuth setup; Apple Calendar has no equivalent general web sign-in, so `.ics` export is the supported path here.
 
 ## Continue in a new Codex chat
 

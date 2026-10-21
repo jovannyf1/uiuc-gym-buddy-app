@@ -1,0 +1,11 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "npm ci && npm --prefix client ci",
+  "buildCommand": "npm run build",
+  "functions": {
+    "index.js": {
+      "maxDuration": 60,
+      "includeFiles": "supabase/migrations/*.sql"
+    }
+  }
+}

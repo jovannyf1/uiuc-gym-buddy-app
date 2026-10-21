@@ -1,40 +1,41 @@
-# Put Illini Workout Buddy online
+# Put Illini Workout Buddy online for $0
 
-The website lives at a Vercel address. Its accounts, schedules, invitations, and chats live on a separate Render service with a persistent SQLite disk. This is necessary because [Vercel Functions do not provide persistent writable files](https://vercel.com/docs/functions/runtimes). The repository contains both setup files; it does not contain a real site address or any secret keys.
+The free hosting setup is **Vercel Hobby for the website and API, plus Supabase Free for PostgreSQL**. Vercel serves the React site and runs the Express API; Supabase saves accounts, profiles, schedules, matches, meetups, and chats. This setup does not need a separate paid server. Keep both accounts on their free plans. Supabase may pause a free project after a week without activity, so reopen the app and confirm the project is active before sharing it after a quiet week. The free database includes 500 MB. See [Supabase free-plan limits](https://supabase.com/docs/guides/platform/billing-on-supabase) and [Vercel Hobby](https://vercel.com/docs/plans/hobby).
 
-## 1. Create the persistent backend on Render
+## 1. Create the free Supabase database
 
-Connect the GitHub repository to Render and create a **Blueprint** from [`render.yaml`](../render.yaml). The Blueprint builds the existing Dockerfile as one web service in Ohio, attaches a 1 GB disk at `/app/data`, and waits for passing GitHub checks before later automatic deploys. Accept the paid plan only after reviewing its displayed price. [Render's current pricing](https://render.com/pricing) lists this `0.5c-512mb` web service at **$7/month plus $0.25/month for the 1 GB disk**, before any extra usage. A free Render web service cannot attach the disk; without it, account and chat data would disappear on redeploy. Nothing in this repository creates a paid service by itself.
+Create a Supabase project on the Free plan and choose a US region. In the project dashboard, open **Connect → Transaction pooler** and copy the connection URI. It should use port `6543`; that pooler mode is intended for serverless functions such as Vercel. The app runs the versioned SQL in [`supabase/migrations/`](../supabase/migrations/) the first time its API starts. The connection URI contains the database password, so add it only as a Vercel environment variable and never put it in the browser app or GitHub. [Supabase connection guidance](https://supabase.com/docs/guides/database/connecting-to-postgres).
 
-When the Render deployment finishes, copy its actual HTTPS `.onrender.com` address. Open `/api/auth/netid/config` at that address: a JSON response confirms the API has started. Sign-up will still say setup is pending until email delivery is configured in step 3.
+## 2. Import the repository into Vercel
 
-## 2. Create the Vercel website
+Import `jovannyf1/uiuc-gym-buddy-app` from GitHub. Leave the project root at the repository root; `vercel.json` sets the install and build commands, and the Express entry point is [`index.js`](../index.js). The Vite build copies static files to `public/` for Vercel's CDN. Vercel also runs the API in a Node.js function. Requests larger than 4.5 MB are rejected by Vercel, so screenshot uploads are capped below that limit. [Vercel Express hosting](https://vercel.com/docs/frameworks/backend/express) · [function limits](https://vercel.com/docs/functions/limitations).
 
-Import the same GitHub repository into Vercel with the **Root Directory** at the repository root. In the Vercel project's Production environment variables, set `BACKEND_ORIGIN` to the Render HTTPS origin from step 1 (scheme and host only; do not add `/api`). Deploy the production branch. [`vercel.mjs`](../vercel.mjs) installs both dependency sets, builds `client/`, serves `client/dist`, and forwards `/api/*` requests to Render under the same visible Vercel address. It refuses to build without a real HTTPS backend address.
-
-Copy the resulting stable Vercel production address. If you later add a custom domain, use that as the public app address and update the settings in step 3. Preview deployments need their own `BACKEND_ORIGIN` setting and an allowed origin on the backend; leave previews unshared until they have been tested.
-
-## 3. Turn on verified email sign-in
-
-Create a Resend account, verify a sending domain you control, and make a sending API key. Resend's test sender can reach only the account owner; a [verified sending domain](https://resend.com/docs/send-with-phoenix) is needed to deliver sign-up links to other students. In **Render → the API service → Environment**, add these four values, then redeploy the service:
+In **Vercel → Project → Settings → Environment Variables**, add these for Production:
 
 | Name | Value |
 | --- | --- |
-| `RESEND_API_KEY` | The secret sending key from Resend. Keep it only on Render. |
-| `EMAIL_FROM` | A sender address at the verified domain you actually own. |
-| `PUBLIC_APP_URL` | The exact HTTPS Vercel production origin students will open. Verification and password-reset links point here. |
-| `CLIENT_ORIGIN` | The same exact HTTPS Vercel origin, so the API accepts browser writes forwarded through Vercel. |
+| `SUPABASE_DATABASE_URL` | The Supabase transaction-pooler connection URI from step 1. |
+| `EMAIL_FROM` | The sender name and email address, such as `Illini Workout Buddy <you@gmail.com>`. |
+| `PUBLIC_APP_URL` | The exact public HTTPS Vercel address, such as `https://your-project.vercel.app`. |
+| `SMTP_HOST` | Your email provider's SMTP host. For Gmail, use `smtp.gmail.com`. |
+| `SMTP_PORT` | `465` for TLS, or `587` for STARTTLS. |
+| `SMTP_USER` | The complete sender email address. |
+| `SMTP_PASSWORD` | An app password or SMTP password from the email provider. |
 
-The signup form accepts any valid email address. It sends a verification link and requires that link before the account can sign in; password resets also arrive by email. Email verification proves control of an inbox, **not** current UIUC student status. Illinois NetID sign-in still requires separate campus registration. Do not enable `ALLOW_PILOT_AUTH` on the public service; that older flow checks only the spelling of an `@illinois.edu` address. The screenshot feature separately needs an optional server-side `OPENAI_API_KEY` on Render.
+These secrets stay on the server. For Gmail, make an App Password in the Google account's security settings and use that in `SMTP_PASSWORD`; do not use the usual account password. Vercel permits authenticated SMTP over ports 465 and 587, and the app waits for delivery before replying. [Vercel SMTP guidance](https://vercel.com/kb/guide/serverless-functions-and-smtp). Resend can also be used instead by setting `RESEND_API_KEY` and leaving the SMTP host blank; sending to classmates requires a verified sender domain.
 
-These four values are deliberately not hardcoded in `render.yaml`: the Vercel URL is unknown when Render is first created, and the Resend key must stay secret. The safe fixed settings (`NODE_ENV`, `DATA_DIR`, secure cookies, and disabled pilot auth) are in the Blueprint.
+The existing app verifies email addresses itself and stores the hashed account credentials and sessions in Supabase Postgres. Every application table has row-level security enabled and no browser-role policies; the Express server uses the private database URI, so browsers cannot read account data through Supabase's Data API. Email verification confirms access to an inbox, not UIUC enrollment. The built-in Supabase Auth email sender is not used. If no SMTP credentials are set, email signup stays disabled rather than accepting unverified accounts.
 
-## 4. Look at the live app
+Keep `ALLOW_PILOT_AUTH=false`. `OPENAI_API_KEY` is optional for interpreting screenshot schedules; it is a separate API service and may have usage charges. Manual availability and `.ics` calendar imports do not need that key. Illinois NetID remains hidden until campus identity staff register an OIDC app and provide the four `ILLINOIS_OIDC_*` values.
 
-Open the Vercel production URL on a phone or another browser. Create an account, receive its email, open the verification link, sign in, edit the profile, and send a message between two accounts. Refresh the page and confirm the data remains. Restart or redeploy the Render service and check again; that confirms the disk is mounted where the database writes. Test a schedule upload through the Vercel URL. Do not share the address as ready until these steps work.
+## 3. Test the deployed app before sharing it
 
-On the native iPhone app, enter the **Render HTTPS origin** in the app's **Server** settings. The iPhone app and Vercel website then use the same backend and accounts; email verification and reset links open the Vercel website. Physical iPhone installation still needs Xcode and Apple signing, as described in [`ios/SETUP.md`](../ios/SETUP.md). Safari users can add the Vercel website to the Home Screen without installing the native app.
+After Vercel finishes its first production deployment, open the Vercel HTTPS address. Check that `/api/auth/netid/config` returns JSON, then test these paths in the app:
 
-If Illinois NetID is configured later, register its web callback at the public Vercel origin plus `/api/auth/netid/callback`, because sign-in returns through Vercel's API proxy. Keep the Illinois OIDC client secret on Render.
+- Create an account using a real inbox, open its verification email, and sign in.
+- Edit the profile and availability; refresh and confirm both remain saved.
+- Use a second account in a separate browser to find a buddy, start a chat, and send a meetup invitation.
+- Upload a small `.ics` file and, if `OPENAI_API_KEY` is configured, a schedule screenshot under 4 MB.
+- Refresh or revisit from another device and confirm the saved profile and chat still appear.
 
-References: [Vercel API rewrites](https://vercel.com/docs/routing/rewrites), [Render Blueprints](https://render.com/docs/blueprint-spec), and [Render persistent disks](https://render.com/docs/disks).
+Keep the address private until these checks work. The native iPhone app uses the same API; enter the Vercel HTTPS address in its **Server** setting. Safari can also install the website from **Share → Add to Home Screen**.

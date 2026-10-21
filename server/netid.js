@@ -75,38 +75,58 @@ function readCookie(req, name) {
     .find(value => value.startsWith(`${name}=`))?.slice(name.length + 1);
 }
 
-function cleanExpired(db) {
+async function cleanExpired(db) {
   const now = Date.now();
-  db.prepare('DELETE FROM netid_flows WHERE created_at < ?').run(now - FLOW_AGE_MS);
-  db.prepare('DELETE FROM netid_native_tickets WHERE expires_at < ?').run(now);
+  await db.prepare('DELETE FROM netid_flows WHERE created_at < ?').run(now - FLOW_AGE_MS);
+  await db.prepare('DELETE FROM netid_native_tickets WHERE expires_at < ?').run(now);
 }
 
-function getOrCreateUser(db, claims) {
+function isUniqueViolation(error) {
+  return error?.code === '23505' || String(error?.message).includes('UNIQUE');
+}
+
+async function withTransaction(db, callback) {
+  if (typeof db.transaction === 'function') return db.transaction(callback);
+
+  // Standalone SQLite tests still pass DatabaseSync directly rather than the
+  // application database wrapper. Keep those callers compatible as well.
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = await callback();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    db.exec('ROLLBACK');
+    throw error;
+  }
+}
+
+async function getOrCreateUser(db, claims) {
   const email = netidEmailFromClaims(claims);
   if (!email || typeof claims.sub !== 'string' || typeof claims.iss !== 'string') {
     throw new InputError('Illinois sign-in did not provide a usable Illinois email and identity.', 403);
   }
   const subject = `${claims.iss}\u0000${claims.sub}`;
-  const existingIdentity = db.prepare('SELECT user_id FROM netid_identities WHERE subject = ?').get(subject);
+  const existingIdentity = await db.prepare('SELECT user_id FROM netid_identities WHERE subject = ?').get(subject);
   if (existingIdentity) return existingIdentity.user_id;
-  const existingUser = db.prepare('SELECT id FROM users WHERE email = ?').get(email);
+  const existingUser = await db.prepare('SELECT id FROM users WHERE email = ?').get(email);
   if (existingUser) {
     // Mailbox verification and campus OIDC both establish control of this
     // Illinois address. Unverified pilot and pending-email accounts cannot
     // be linked by matching a typed address.
-    const verified = db.prepare(`SELECT 1 FROM email_identities
+    const verified = await db.prepare(`SELECT 1 FROM email_identities
       WHERE user_id = ? AND verified_at IS NOT NULL`).get(existingUser.id);
     if (!verified) {
       throw new InputError('This Illinois email has an unverified account. Account migration is required before NetID sign-in.', 409);
     }
-    if (db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(existingUser.id)) {
+    if (await db.prepare('SELECT 1 FROM netid_identities WHERE user_id = ?').get(existingUser.id)) {
       throw new InputError('This account is already linked to a different Illinois identity. Account review is required.', 409);
     }
     try {
-      db.prepare('INSERT INTO netid_identities (subject, user_id, created_at) VALUES (?, ?, ?)')
+      await db.prepare('INSERT INTO netid_identities (subject, user_id, created_at) VALUES (?, ?, ?)')
         .run(subject, existingUser.id, Date.now());
     } catch (error) {
-      if (String(error.message).includes('UNIQUE')) {
+      if (isUniqueViolation(error)) {
         throw new InputError('This Illinois identity is already linked to another account.', 409);
       }
       throw error;
@@ -114,23 +134,25 @@ function getOrCreateUser(db, claims) {
     return existingUser.id;
   }
   const displayName = String(claims.name || claims.given_name || email.split('@')[0]).trim().slice(0, 80) || email.split('@')[0];
-  db.exec('BEGIN IMMEDIATE');
   try {
-    const created = db.prepare(`INSERT INTO users (name, email, password_hash, password_salt, created_at)
-      VALUES (?, ?, ?, ?, ?)`).run(displayName, email, randomBytes(64).toString('hex'), randomBytes(16).toString('hex'), new Date().toISOString());
-    db.prepare('INSERT INTO netid_identities (subject, user_id, created_at) VALUES (?, ?, ?)')
-      .run(subject, created.lastInsertRowid, Date.now());
-    db.exec('COMMIT');
-    return created.lastInsertRowid;
+    return await withTransaction(db, async () => {
+      const created = await db.prepare(`INSERT INTO users (name, email, password_hash, password_salt, created_at)
+        VALUES (?, ?, ?, ?, ?)`).run(displayName, email, randomBytes(64).toString('hex'), randomBytes(16).toString('hex'), new Date().toISOString());
+      await db.prepare('INSERT INTO netid_identities (subject, user_id, created_at) VALUES (?, ?, ?)')
+        .run(subject, created.lastInsertRowid, Date.now());
+      return created.lastInsertRowid;
+    });
   } catch (error) {
-    db.exec('ROLLBACK');
+    if (isUniqueViolation(error)) {
+      throw new InputError('This Illinois identity is already linked to another account.', 409);
+    }
     throw error;
   }
 }
 
 export function registerNetidRoutes({ app, db, createSession, profile,
   pilotAuthEnabled = true, emailAuthEnabled = false }) {
-  db.exec(`
+  if (db.kind !== 'postgres') db.exec(`
     CREATE TABLE IF NOT EXISTS netid_identities (
       subject TEXT PRIMARY KEY,
       user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
@@ -174,8 +196,9 @@ export function registerNetidRoutes({ app, db, createSession, profile,
     if (native && (typeof nativeChallenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(nativeChallenge))) {
       throw new InputError('The iPhone sign-in request is invalid.');
     }
-    cleanExpired(db);
-    if (db.prepare('SELECT COUNT(*) AS count FROM netid_flows').get().count >= MAX_PENDING_FLOWS) {
+    await cleanExpired(db);
+    const pendingFlows = await db.prepare('SELECT COUNT(*) AS count FROM netid_flows').get();
+    if (pendingFlows.count >= MAX_PENDING_FLOWS) {
       throw new InputError('Illinois sign-in is busy. Please try again in a few minutes.', 429);
     }
     const config = await configuration();
@@ -183,7 +206,7 @@ export function registerNetidRoutes({ app, db, createSession, profile,
     const verifier = oidc.randomPKCECodeVerifier();
     const nonce = oidc.randomNonce();
     const challenge = await oidc.calculatePKCECodeChallenge(verifier);
-    db.prepare('INSERT INTO netid_flows (state_hash, verifier, nonce, native_challenge, created_at) VALUES (?, ?, ?, ?, ?)')
+    await db.prepare('INSERT INTO netid_flows (state_hash, verifier, nonce, native_challenge, created_at) VALUES (?, ?, ?, ?, ?)')
       .run(hash(state), verifier, nonce, nativeChallenge, Date.now());
     res.cookie(FLOW_COOKIE, state, { ...flowCookieOptions(req), maxAge: FLOW_AGE_MS });
     const url = oidc.buildAuthorizationUrl(config, {
@@ -204,11 +227,11 @@ export function registerNetidRoutes({ app, db, createSession, profile,
       || readCookie(req, FLOW_COOKIE) !== state) {
       throw new InputError('Illinois sign-in could not be verified. Please try again.', 400);
     }
-    const flow = db.prepare('SELECT * FROM netid_flows WHERE state_hash = ?').get(hash(state));
+    const flow = await db.prepare('SELECT * FROM netid_flows WHERE state_hash = ?').get(hash(state));
     if (!flow || Date.now() - flow.created_at > FLOW_AGE_MS) {
       throw new InputError('Illinois sign-in expired. Please try again.', 400);
     }
-    db.prepare('DELETE FROM netid_flows WHERE state_hash = ?').run(hash(state));
+    await db.prepare('DELETE FROM netid_flows WHERE state_hash = ?').run(hash(state));
     res.clearCookie(FLOW_COOKIE, flowCookieOptions(req));
     const configured = settings();
     if (!configured) throw new InputError('Illinois NetID sign-in is awaiting campus app registration.', 503);
@@ -219,15 +242,15 @@ export function registerNetidRoutes({ app, db, createSession, profile,
       expectedState: state,
       idTokenExpected: true,
     });
-    const userId = getOrCreateUser(db, tokens.claims());
+    const userId = await getOrCreateUser(db, tokens.claims());
     if (flow.native_challenge) {
       const ticket = randomToken();
-      db.prepare('INSERT INTO netid_native_tickets (ticket_hash, user_id, challenge, expires_at) VALUES (?, ?, ?, ?)')
+      await db.prepare('INSERT INTO netid_native_tickets (ticket_hash, user_id, challenge, expires_at) VALUES (?, ?, ?, ?)')
         .run(hash(ticket), userId, flow.native_challenge, Date.now() + TICKET_AGE_MS);
       res.redirect(`${NATIVE_CALLBACK}?code=${ticket}`);
       return;
     }
-    createSession(req, res, userId);
+    await createSession(req, res, userId);
     res.redirect('/');
   }));
 
@@ -237,16 +260,21 @@ export function registerNetidRoutes({ app, db, createSession, profile,
       throw new InputError('The iPhone sign-in code is invalid.');
     }
     const challenge = pkceChallenge(verifier);
-    cleanExpired(db);
-    const ticket = db.prepare('SELECT * FROM netid_native_tickets WHERE ticket_hash = ?').get(hash(code));
+    await cleanExpired(db);
+    const ticket = await db.prepare('SELECT * FROM netid_native_tickets WHERE ticket_hash = ?').get(hash(code));
     if (!ticket || ticket.expires_at <= Date.now()
       || !timingSafeEqual(Buffer.from(challenge), Buffer.from(ticket.challenge))) {
       throw new InputError('The iPhone sign-in code expired or could not be verified.', 401);
     }
-    db.prepare('DELETE FROM netid_native_tickets WHERE ticket_hash = ?').run(hash(code));
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(ticket.user_id);
+    const consumed = await db.prepare(`DELETE FROM netid_native_tickets
+      WHERE ticket_hash = ? AND challenge = ? AND expires_at > ?`)
+      .run(hash(code), challenge, Date.now());
+    if (consumed.changes !== 1) {
+      throw new InputError('The iPhone sign-in code expired or could not be verified.', 401);
+    }
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(ticket.user_id);
     if (!user) throw new InputError('This Illinois account is no longer available.', 404);
-    createSession(req, res, user.id);
+    await createSession(req, res, user.id);
     res.json({ user: profile(user, true) });
   }));
 }

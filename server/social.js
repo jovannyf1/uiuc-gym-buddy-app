@@ -67,7 +67,8 @@ function messageFor(row) {
 // presence is discoverable; private weekly availability is never returned here.
 export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityRequired = false,
   trustedUser = () => true }) {
-  db.exec(`
+  // Raw DatabaseSync remains supported in tests that inject it directly.
+  if ((db.kind ?? 'sqlite') === 'sqlite') db.exec(`
     CREATE TABLE IF NOT EXISTS workout_presence (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
       activity TEXT NOT NULL,
@@ -127,10 +128,11 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
   const chatById = db.prepare('SELECT * FROM chats WHERE id = ?');
   const latestMessage = db.prepare('SELECT * FROM chat_messages WHERE chat_id = ? ORDER BY id DESC LIMIT 1');
   const deleteExpiredPresence = db.prepare('DELETE FROM workout_presence WHERE expires_at <= ?');
-  deleteExpiredPresence.run(Date.now());
 
-  function requireVerifiedIdentity(userId) {
-    if (!trustedUser(userId)) {
+  const handle = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
+  async function requireVerifiedIdentity(userId) {
+    if (!await trustedUser(userId)) {
       throw new InputError('A verified account is required.', 403);
     }
   }
@@ -140,43 +142,46 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
       OR EXISTS (SELECT 1 FROM email_identities e WHERE e.user_id = ${column} AND e.verified_at IS NOT NULL))`
     : '1 = 1';
 
-  function isBlocked(firstId, secondId) {
-    return Boolean(blocked.get(firstId, secondId, secondId, firstId));
+  async function isBlocked(firstId, secondId) {
+    return Boolean(await blocked.get(firstId, secondId, secondId, firstId));
   }
 
-  function readableChat(chatId, userId) {
-    const chat = chatById.get(chatId);
+  async function readableChat(chatId, userId) {
+    const chat = await chatById.get(chatId);
     if (!chat || (chat.user_a_id !== userId && chat.user_b_id !== userId)) {
       throw new InputError('Chat not found.', 404);
     }
-    if (!trustedUser(chat.user_a_id) || !trustedUser(chat.user_b_id)) {
+    if (!await trustedUser(chat.user_a_id) || !await trustedUser(chat.user_b_id)) {
       throw new InputError('Chat not found.', 404);
     }
     return chat;
   }
 
-  function chatFor(chat, userId) {
+  async function chatFor(chat, userId) {
     const otherUserId = chat.user_a_id === userId ? chat.user_b_id : chat.user_a_id;
+    const [otherUser, lastMessage] = await Promise.all([
+      userById.get(otherUserId),
+      latestMessage.get(chat.id),
+    ]);
     return {
       id: chat.id,
-      otherUser: publicProfile(userById.get(otherUserId)),
-      lastMessage: messageFor(latestMessage.get(chat.id)),
+      otherUser: publicProfile(otherUser),
+      lastMessage: messageFor(lastMessage),
       updatedAt: chat.updated_at,
     };
   }
 
-  app.get('/api/presence/me', requireAuth, (req, res) => {
-    requireVerifiedIdentity(req.user.id);
+  app.get('/api/presence/me', requireAuth, handle(async (req, res) => {
+    await requireVerifiedIdentity(req.user.id);
     const now = Date.now();
-    deleteExpiredPresence.run(now);
-    const row = db.prepare('SELECT * FROM workout_presence WHERE user_id = ? AND expires_at > ?')
+    await deleteExpiredPresence.run(now);
+    const row = await db.prepare('SELECT * FROM workout_presence WHERE user_id = ? AND expires_at > ?')
       .get(req.user.id, now);
     res.json({ presence: presenceFor(row) });
-  });
+  }));
 
-  app.put('/api/presence', requireAuth, (req, res, next) => {
-    try {
-      requireVerifiedIdentity(req.user.id);
+  app.put('/api/presence', requireAuth, handle(async (req, res) => {
+      await requireVerifiedIdentity(req.user.id);
       if (!objectWithOnlyKeys(req.body, ['activity', 'location', 'durationMinutes'])) {
         throw new InputError('Choose a gym and workout activity.');
       }
@@ -193,34 +198,33 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
         throw new InputError('Add this activity and gym to your profile first.');
       }
       const now = Date.now();
-      deleteExpiredPresence.run(now);
+      await deleteExpiredPresence.run(now);
       const expiresAt = now + durationMinutes * 60 * 1000;
-      db.prepare(`INSERT INTO workout_presence (user_id, activity, location, expires_at, updated_at)
+      await db.prepare(`INSERT INTO workout_presence (user_id, activity, location, expires_at, updated_at)
         VALUES (?, ?, ?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET
         activity = excluded.activity, location = excluded.location,
         expires_at = excluded.expires_at, updated_at = excluded.updated_at`)
         .run(req.user.id, activity, location, expiresAt, now);
       res.json({ presence: presenceFor({ activity, location, expires_at: expiresAt }) });
-    } catch (error) { next(error); }
-  });
+  }));
 
-  app.delete('/api/presence', requireAuth, (req, res) => {
-    db.prepare('DELETE FROM workout_presence WHERE user_id = ?').run(req.user.id);
+  app.delete('/api/presence', requireAuth, handle(async (req, res) => {
+    await db.prepare('DELETE FROM workout_presence WHERE user_id = ?').run(req.user.id);
     res.json({ ok: true });
-  });
+  }));
 
-  app.get('/api/presence/nearby', requireAuth, (req, res) => {
-    requireVerifiedIdentity(req.user.id);
+  app.get('/api/presence/nearby', requireAuth, handle(async (req, res) => {
+    await requireVerifiedIdentity(req.user.id);
     const now = Date.now();
-    deleteExpiredPresence.run(now);
+    await deleteExpiredPresence.run(now);
     const people = [];
-    const rows = db.prepare(`SELECT p.user_id, p.activity, p.location, p.expires_at
+    const rows = await db.prepare(`SELECT p.user_id, p.activity, p.location, p.expires_at
       FROM workout_presence p
       WHERE p.user_id != ? AND p.expires_at > ? AND ${trustedPredicate('p.user_id')}
       ORDER BY p.updated_at DESC LIMIT 200`).all(req.user.id, now);
     for (const row of rows) {
-      if (isBlocked(req.user.id, row.user_id)) continue;
-      const person = userById.get(row.user_id);
+      if (await isBlocked(req.user.id, row.user_id)) continue;
+      const person = await userById.get(row.user_id);
       if (!person) continue;
       const shared = compatibleProfiles(req.user, person);
       if (shared?.activities.includes(row.activity) && shared.locations.includes(row.location)) {
@@ -228,66 +232,66 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
       }
     }
     res.json({ people });
-  });
+  }));
 
-  app.get('/api/chats', requireAuth, (req, res) => {
-    requireVerifiedIdentity(req.user.id);
-    const rows = db.prepare(`SELECT c.* FROM chats c
+  app.get('/api/chats', requireAuth, handle(async (req, res) => {
+    await requireVerifiedIdentity(req.user.id);
+    const rows = await db.prepare(`SELECT c.* FROM chats c
       WHERE (c.user_a_id = ? OR c.user_b_id = ?)
         AND ${trustedPredicate('c.user_a_id')} AND ${trustedPredicate('c.user_b_id')}
       ORDER BY c.updated_at_ms DESC, c.id DESC LIMIT 100`).all(req.user.id, req.user.id);
-    const chats = rows.filter(row => !isBlocked(row.user_a_id, row.user_b_id))
-      .map(row => chatFor(row, req.user.id));
+    const chats = [];
+    for (const row of rows) {
+      if (!await isBlocked(row.user_a_id, row.user_b_id)) chats.push(await chatFor(row, req.user.id));
+    }
     res.json({ chats });
-  });
+  }));
 
-  app.post('/api/chats', requireAuth, (req, res, next) => {
-    try {
-      requireVerifiedIdentity(req.user.id);
+  app.post('/api/chats', requireAuth, handle(async (req, res) => {
+      await requireVerifiedIdentity(req.user.id);
       if (!objectWithOnlyKeys(req.body, ['toUserId'])) throw new InputError('Choose a member to chat with.');
       const targetId = positiveId(req.body.toUserId);
       if (targetId === req.user.id) throw new InputError('Choose another member to chat with.');
-      const target = userById.get(targetId);
-      if (!target || !trustedUser(targetId)) throw new InputError('This member is unavailable.', 404);
-      if (isBlocked(req.user.id, targetId)) throw new InputError('You cannot contact this member.', 403);
+      const target = await userById.get(targetId);
+      if (!target || !await trustedUser(targetId)) throw new InputError('This member is unavailable.', 404);
+      if (await isBlocked(req.user.id, targetId)) throw new InputError('You cannot contact this member.', 403);
       if (!compatibleProfiles(req.user, target)) {
         throw new InputError('You and this member need a shared activity and gym to chat.', 403);
       }
       const [firstId, secondId] = [req.user.id, targetId].sort((a, b) => a - b);
-      const existing = db.prepare('SELECT * FROM chats WHERE user_a_id = ? AND user_b_id = ?')
+      const existing = await db.prepare('SELECT * FROM chats WHERE user_a_id = ? AND user_b_id = ?')
         .get(firstId, secondId);
-      if (existing) return res.json({ chat: chatFor(existing, req.user.id) });
+      if (existing) return res.json({ chat: await chatFor(existing, req.user.id) });
       const nowMs = Date.now();
-      const started = db.prepare(`SELECT COUNT(*) AS total FROM chats
-        WHERE initiated_by_user_id = ? AND created_at_ms > ?`).get(req.user.id, nowMs - DAY_MS).total;
+      const started = (await db.prepare(`SELECT COUNT(*) AS total FROM chats
+        WHERE initiated_by_user_id = ? AND created_at_ms > ?`).get(req.user.id, nowMs - DAY_MS)).total;
       if (started >= MAX_NEW_CHATS_PER_DAY) {
         throw new InputError('Too many new chats today. Try again later.', 429);
       }
       const now = new Date(nowMs).toISOString();
-      db.prepare(`INSERT OR IGNORE INTO chats
+      await db.prepare(`INSERT INTO chats
         (user_a_id, user_b_id, initiated_by_user_id, created_at, created_at_ms, updated_at, updated_at_ms)
-        VALUES (?, ?, ?, ?, ?, ?, ?)`).run(firstId, secondId, req.user.id, now, nowMs, now, nowMs);
-      const chat = db.prepare('SELECT * FROM chats WHERE user_a_id = ? AND user_b_id = ?')
+        VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`)
+        .run(firstId, secondId, req.user.id, now, nowMs, now, nowMs);
+      const chat = await db.prepare('SELECT * FROM chats WHERE user_a_id = ? AND user_b_id = ?')
         .get(firstId, secondId);
-      res.status(201).json({ chat: chatFor(chat, req.user.id) });
-    } catch (error) { next(error); }
-  });
+      res.status(201).json({ chat: await chatFor(chat, req.user.id) });
+  }));
 
-  app.get('/api/chats/:id/messages', requireAuth, (req, res, next) => {
-    try {
+  app.get('/api/chats/:id/messages', requireAuth, handle(async (req, res) => {
       const chatId = positiveId(req.params.id);
-      readableChat(chatId, req.user.id);
-      const before = req.query.before === undefined ? Number.MAX_SAFE_INTEGER : positiveId(req.query.before);
-      const rows = db.prepare(`SELECT * FROM chat_messages WHERE chat_id = ? AND id < ?
-        ORDER BY id DESC LIMIT 100`).all(chatId, before);
+      await readableChat(chatId, req.user.id);
+      const rows = req.query.before === undefined
+        ? await db.prepare(`SELECT * FROM chat_messages WHERE chat_id = ?
+          ORDER BY id DESC LIMIT 100`).all(chatId)
+        : await db.prepare(`SELECT * FROM chat_messages WHERE chat_id = ? AND id < ?
+          ORDER BY id DESC LIMIT 100`).all(chatId, positiveId(req.query.before));
       res.json({ messages: rows.reverse().map(messageFor) });
-    } catch (error) { next(error); }
-  });
+  }));
 
-  app.post('/api/chats/:id/messages', requireAuth, (req, res, next) => {
-    try {
+  app.post('/api/chats/:id/messages', requireAuth, handle(async (req, res) => {
       const chatId = positiveId(req.params.id);
-      const chat = readableChat(chatId, req.user.id);
+      const chat = await readableChat(chatId, req.user.id);
       if (!objectWithOnlyKeys(req.body, ['text']) || typeof req.body.text !== 'string') {
         throw new InputError('Write a message to send.');
       }
@@ -296,76 +300,81 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
         throw new InputError('Messages must be between 1 and 1000 characters.');
       }
       const otherUserId = chat.user_a_id === req.user.id ? chat.user_b_id : chat.user_a_id;
-      if (isBlocked(req.user.id, otherUserId)) throw new InputError('You cannot contact this member.', 403);
-      if (!compatibleProfiles(req.user, userById.get(otherUserId))) {
+      if (await isBlocked(req.user.id, otherUserId)) throw new InputError('You cannot contact this member.', 403);
+      if (!compatibleProfiles(req.user, await userById.get(otherUserId))) {
         throw new InputError('You and this member no longer have a shared activity and gym.', 403);
       }
       const nowMs = Date.now();
-      const recent = db.prepare(`SELECT created_at_ms FROM chat_messages
+      const recent = await db.prepare(`SELECT created_at_ms FROM chat_messages
         WHERE sender_user_id = ? ORDER BY created_at_ms DESC LIMIT 1`).get(req.user.id);
       if (recent && nowMs - recent.created_at_ms < MESSAGE_COOLDOWN_MS) {
         throw new InputError('Please wait a moment before sending another message.', 429);
       }
-      const hourly = db.prepare(`SELECT COUNT(*) AS total FROM chat_messages
-        WHERE sender_user_id = ? AND created_at_ms > ?`).get(req.user.id, nowMs - HOUR_MS).total;
+      const hourly = (await db.prepare(`SELECT COUNT(*) AS total FROM chat_messages
+        WHERE sender_user_id = ? AND created_at_ms > ?`).get(req.user.id, nowMs - HOUR_MS)).total;
       if (hourly >= MAX_MESSAGES_PER_HOUR) {
         throw new InputError('Too many messages this hour. Try again later.', 429);
       }
       const now = new Date(nowMs).toISOString();
-      const result = db.prepare(`INSERT INTO chat_messages
-        (chat_id, sender_user_id, body, created_at, created_at_ms) VALUES (?, ?, ?, ?, ?)`)
-        .run(chatId, req.user.id, text, now, nowMs);
-      db.prepare('UPDATE chats SET updated_at = ?, updated_at_ms = ? WHERE id = ?')
+      const inserted = await db.prepare(`INSERT INTO chat_messages
+        (chat_id, sender_user_id, body, created_at, created_at_ms) VALUES (?, ?, ?, ?, ?) RETURNING id`)
+        .get(chatId, req.user.id, text, now, nowMs);
+      await db.prepare('UPDATE chats SET updated_at = ?, updated_at_ms = ? WHERE id = ?')
         .run(now, nowMs, chatId);
-      res.status(201).json({ message: messageFor(db.prepare('SELECT * FROM chat_messages WHERE id = ?')
-        .get(result.lastInsertRowid)) });
-    } catch (error) { next(error); }
-  });
+      res.status(201).json({ message: messageFor(await db.prepare('SELECT * FROM chat_messages WHERE id = ?')
+        .get(inserted.id)) });
+  }));
 
-  app.post('/api/users/:id/block', requireAuth, (req, res, next) => {
-    try {
+  app.post('/api/users/:id/block', requireAuth, handle(async (req, res) => {
       const targetId = positiveId(req.params.id);
-      if (targetId === req.user.id || !userById.get(targetId)) {
+      if (targetId === req.user.id || !await userById.get(targetId)) {
         throw new InputError('Choose another member to block.');
       }
-      db.exec('BEGIN IMMEDIATE');
-      try {
-        db.prepare(`INSERT OR IGNORE INTO user_blocks
+      const saveBlock = async () => {
+        await db.prepare(`INSERT INTO user_blocks
           (blocker_user_id, blocked_user_id, created_at) VALUES (?, ?, ?)`)
           .run(req.user.id, targetId, new Date().toISOString());
-        db.prepare(`UPDATE meetups SET status = 'cancelled'
+        await db.prepare(`UPDATE meetups SET status = 'cancelled'
           WHERE status IN ('pending', 'accepted') AND
-            ((from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?))`)
+            ((from_user_id = ? AND to_user_id = ?) OR (from_user_id = ? AND to_user_id = ?))
+          `)
           .run(req.user.id, targetId, targetId, req.user.id);
-        db.exec('COMMIT');
-      } catch (error) {
-        db.exec('ROLLBACK');
-        throw error;
+      };
+      if (typeof db.transaction === 'function') {
+        await db.transaction(saveBlock);
+      } else {
+        // Backward-compatible path for tests that inject a bare DatabaseSync.
+        db.exec('BEGIN IMMEDIATE');
+        try {
+          await saveBlock();
+          db.exec('COMMIT');
+        } catch (error) {
+          db.exec('ROLLBACK');
+          throw error;
+        }
       }
       res.json({ blocked: true });
-    } catch (error) { next(error); }
-  });
+  }));
 
-  app.get('/api/blocks', requireAuth, (req, res) => {
-    const rows = db.prepare(`SELECT u.* FROM user_blocks b
+  app.get('/api/blocks', requireAuth, handle(async (req, res) => {
+    const rows = await db.prepare(`SELECT u.* FROM user_blocks b
       JOIN users u ON u.id = b.blocked_user_id
       WHERE b.blocker_user_id = ? ORDER BY u.name, u.id`).all(req.user.id);
-    res.json({ blockedUsers: rows.filter(row => trustedUser(row.id)).map(publicProfile) });
-  });
+    const blockedUsers = [];
+    for (const row of rows) if (await trustedUser(row.id)) blockedUsers.push(publicProfile(row));
+    res.json({ blockedUsers });
+  }));
 
-  app.delete('/api/users/:id/block', requireAuth, (req, res, next) => {
-    try {
+  app.delete('/api/users/:id/block', requireAuth, handle(async (req, res) => {
       const targetId = positiveId(req.params.id);
-      db.prepare('DELETE FROM user_blocks WHERE blocker_user_id = ? AND blocked_user_id = ?')
+      await db.prepare('DELETE FROM user_blocks WHERE blocker_user_id = ? AND blocked_user_id = ?')
         .run(req.user.id, targetId);
       res.json({ blocked: false });
-    } catch (error) { next(error); }
-  });
+  }));
 
-  app.post('/api/users/:id/report', requireAuth, (req, res, next) => {
-    try {
+  app.post('/api/users/:id/report', requireAuth, handle(async (req, res) => {
       const targetId = positiveId(req.params.id);
-      if (targetId === req.user.id || !userById.get(targetId)) {
+      if (targetId === req.user.id || !await userById.get(targetId)) {
         throw new InputError('Choose another member to report.');
       }
       if (!objectWithOnlyKeys(req.body, ['reason', 'details'])
@@ -377,15 +386,14 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
         throw new InputError('Report details must be under 500 characters.');
       }
       const nowMs = Date.now();
-      const recent = db.prepare(`SELECT 1 FROM user_reports
+      const recent = await db.prepare(`SELECT 1 FROM user_reports
         WHERE reporter_user_id = ? AND reported_user_id = ? AND created_at_ms > ? LIMIT 1`)
         .get(req.user.id, targetId, nowMs - DAY_MS);
       if (recent) throw new InputError('You have already reported this member today.', 429);
-      db.prepare(`INSERT INTO user_reports
+      await db.prepare(`INSERT INTO user_reports
         (reporter_user_id, reported_user_id, reason, details, created_at, created_at_ms)
         VALUES (?, ?, ?, ?, ?, ?)`)
         .run(req.user.id, targetId, req.body.reason, details.trim(), new Date(nowMs).toISOString(), nowMs);
       res.status(201).json({ reported: true });
-    } catch (error) { next(error); }
-  });
+  }));
 }

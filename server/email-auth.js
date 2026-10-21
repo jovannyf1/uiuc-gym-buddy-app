@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from 'node:crypto';
+import nodemailer from 'nodemailer';
 import { InputError } from './core.js';
 
 const VERIFY_AGE_MS = 30 * 60 * 1000;
@@ -8,14 +9,40 @@ const EMAIL_PATTERN = /^[a-z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-z0-9](?:[a-z0-9-]*[a-z0
 const tokenHash = token => createHash('sha256').update(token).digest('hex');
 
 export function emailAuthSettings() {
-  const { RESEND_API_KEY, EMAIL_FROM, PUBLIC_APP_URL } = process.env;
-  if (![RESEND_API_KEY, EMAIL_FROM, PUBLIC_APP_URL].every(Boolean)) return null;
+  const { RESEND_API_KEY, EMAIL_FROM, PUBLIC_APP_URL, SMTP_HOST, SMTP_PORT,
+    SMTP_USER, SMTP_PASSWORD } = process.env;
+  if (!EMAIL_FROM || !PUBLIC_APP_URL || (!SMTP_HOST && !RESEND_API_KEY)) return null;
   const url = new URL(PUBLIC_APP_URL);
   if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname))) {
     throw new Error('PUBLIC_APP_URL must use HTTPS (localhost HTTP is allowed for development).');
   }
   if (url.search || url.hash || url.username || url.password) throw new Error('PUBLIC_APP_URL must be a plain app URL.');
-  return { apiKey: RESEND_API_KEY, from: EMAIL_FROM, appUrl: url.href };
+  const common = { from: EMAIL_FROM, appUrl: url.href };
+  if (!SMTP_HOST) return { ...common, delivery: 'resend', apiKey: RESEND_API_KEY };
+
+  const port = SMTP_PORT ? Number(SMTP_PORT) : 465;
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error('SMTP_PORT must be an integer between 1 and 65535.');
+  }
+  if (Boolean(SMTP_USER) !== Boolean(SMTP_PASSWORD)) {
+    throw new Error('Set both SMTP_USER and SMTP_PASSWORD, or neither.');
+  }
+  const secure = port === 465;
+  return {
+    ...common,
+    delivery: 'smtp',
+    smtp: {
+      host: SMTP_HOST,
+      port,
+      secure,
+      requireTLS: !secure,
+      tls: { minVersion: 'TLSv1.2', rejectUnauthorized: true },
+      connectionTimeout: 10_000,
+      greetingTimeout: 10_000,
+      socketTimeout: 10_000,
+      ...(SMTP_USER ? { auth: { user: SMTP_USER, pass: SMTP_PASSWORD } } : {}),
+    },
+  };
 }
 
 function normalizeEmail(value) {
@@ -36,27 +63,41 @@ function onlyKeys(value, keys) {
     && Object.keys(value).every(key => keys.includes(key));
 }
 
-function limited(db, kind, value, limit, windowMs) {
+async function limited(db, kind, value, limit, windowMs) {
   const key = tokenHash(`${kind}:${value}`);
   const now = Date.now();
-  db.prepare('DELETE FROM email_auth_limits WHERE window_end < ?').run(now - 24 * 60 * 60 * 1000);
-  const row = db.prepare('SELECT count, window_end FROM email_auth_limits WHERE key = ?').get(key);
+  await db.prepare('DELETE FROM email_auth_limits WHERE window_end < ?').run(now - 24 * 60 * 60 * 1000);
+  const row = await db.prepare('SELECT count, window_end FROM email_auth_limits WHERE key = ?').get(key);
   if (row?.window_end > now && row.count >= limit) throw new InputError('Too many attempts. Please try again later.', 429);
   if (!row || row.window_end <= now) {
-    db.prepare(`INSERT INTO email_auth_limits (key, count, window_end) VALUES (?, 1, ?)
+    await db.prepare(`INSERT INTO email_auth_limits (key, count, window_end) VALUES (?, 1, ?)
       ON CONFLICT(key) DO UPDATE SET count = 1, window_end = excluded.window_end`).run(key, now + windowMs);
   } else {
-    db.prepare('UPDATE email_auth_limits SET count = count + 1 WHERE key = ?').run(key);
+    await db.prepare('UPDATE email_auth_limits SET count = count + 1 WHERE key = ?').run(key);
   }
 }
 
-function createToken(db, userId, purpose, ageMs) {
+async function createToken(db, userId, purpose, ageMs) {
   const token = randomBytes(32).toString('base64url');
-  db.prepare('DELETE FROM email_auth_tokens WHERE expires_at <= ?').run(Date.now());
+  await db.prepare('DELETE FROM email_auth_tokens WHERE expires_at <= ?').run(Date.now());
   // Keep earlier delivered links usable until one succeeds or expires.
-  db.prepare(`INSERT INTO email_auth_tokens (token_hash, user_id, purpose, expires_at)
+  await db.prepare(`INSERT INTO email_auth_tokens (token_hash, user_id, purpose, expires_at)
     VALUES (?, ?, ?, ?)`).run(tokenHash(token), userId, purpose, Date.now() + ageMs);
   return token;
+}
+
+async function transaction(db, operation) {
+  if (typeof db.transaction === 'function') return db.transaction(operation);
+  if (db.kind === 'postgres') throw new Error('The Postgres database adapter must provide transaction().');
+  db.exec('BEGIN IMMEDIATE');
+  try {
+    const result = await operation();
+    db.exec('COMMIT');
+    return result;
+  } catch (error) {
+    try { db.exec('ROLLBACK'); } catch { /* Preserve the original failure. */ }
+    throw error;
+  }
 }
 
 function link(settings, kind, token) {
@@ -65,7 +106,16 @@ function link(settings, kind, token) {
   return url.href;
 }
 
-async function sendEmail(settings, to, subject, body) {
+async function sendEmail(settings, to, subject, body, createSmtpTransport) {
+  if (settings.delivery === 'smtp') {
+    try {
+      await createSmtpTransport(settings.smtp).sendMail({ from: settings.from, to, subject, text: body });
+      return;
+    } catch (error) {
+      console.error('Email delivery failed via SMTP:', error?.code || 'unknown error');
+      throw new InputError('Email could not be sent. Please try again later.', 503);
+    }
+  }
   let response;
   try {
     response = await fetch('https://api.resend.com/emails', {
@@ -84,6 +134,7 @@ async function sendEmail(settings, to, subject, body) {
 }
 
 export function initializeEmailAuth(db) {
+  if (db.kind === 'postgres') return;
   db.exec(`
     CREATE TABLE IF NOT EXISTS email_identities (
       user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -105,13 +156,15 @@ export function initializeEmailAuth(db) {
   `);
 }
 
-export function hasVerifiedIdentity(db, userId) {
-  return Boolean(db.prepare(`SELECT 1 FROM netid_identities WHERE user_id = ?`).get(userId)
-    || db.prepare(`SELECT 1 FROM email_identities WHERE user_id = ? AND verified_at IS NOT NULL`).get(userId));
+export async function hasVerifiedIdentity(db, userId) {
+  if (await db.prepare(`SELECT 1 FROM netid_identities WHERE user_id = ?`).get(userId)) return true;
+  return Boolean(await db.prepare(`SELECT 1 FROM email_identities WHERE user_id = ? AND verified_at IS NOT NULL`).get(userId));
 }
 
-export function registerEmailRoutes({ app, db, createSession, profile, hashPassword, passwordMatches }) {
+export function registerEmailRoutes({ app, db, createSession, profile, hashPassword, passwordMatches,
+  createSmtpTransport = nodemailer.createTransport }) {
   const settings = emailAuthSettings();
+  const deliver = (config, to, subject, body) => sendEmail(config, to, subject, body, createSmtpTransport);
   const handle = fn => (req, res, next) => Promise.resolve(fn(req, res)).catch(next);
   const enabled = () => {
     if (!settings) throw new InputError('Email sign-in is awaiting setup.', 503);
@@ -122,38 +175,40 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
   app.post('/api/auth/email/register', handle(async (req, res) => {
     const config = enabled();
     if (!onlyKeys(req.body, ['name', 'email', 'password'])) throw new InputError('Enter your name, email, and password.');
-    limited(db, 'register-ip', req.ip, 10, 60 * 60 * 1000);
+    await limited(db, 'register-ip', req.ip, 10, 60 * 60 * 1000);
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     if (name.length < 2 || name.length > 80) throw new InputError('Name must be 2–80 characters.');
     const email = normalizeEmail(req.body.email);
-    limited(db, 'register-email', email, 3, 60 * 60 * 1000);
+    await limited(db, 'register-email', email, 3, 60 * 60 * 1000);
     const password = passwordField(req.body.password);
-    if (db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) {
+    if (await db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) {
       throw new InputError('This email already has an account. Sign in or request a password reset; a pilot account needs migration.', 409);
     }
     const { salt, hash } = await hashPassword(password);
     let userId;
-    db.exec('BEGIN IMMEDIATE');
     try {
-      const created = db.prepare(`INSERT INTO users (name, email, password_hash, password_salt, created_at)
-        VALUES (?, ?, ?, ?, ?)`).run(name, email, hash, salt, new Date().toISOString());
-      userId = Number(created.lastInsertRowid);
-      db.prepare('INSERT INTO email_identities (user_id, verified_at, created_at) VALUES (?, NULL, ?)')
-        .run(userId, Date.now());
-      db.exec('COMMIT');
+      await transaction(db, async () => {
+        const created = await db.prepare(`INSERT INTO users (name, email, password_hash, password_salt, created_at)
+          VALUES (?, ?, ?, ?, ?) RETURNING id`).get(name, email, hash, salt, new Date().toISOString());
+        if (!created) throw new Error('User insert did not return an id.');
+        userId = created.id;
+        await db.prepare('INSERT INTO email_identities (user_id, verified_at, created_at) VALUES (?, NULL, ?)')
+          .run(userId, Date.now());
+      });
     } catch (error) {
-      db.exec('ROLLBACK');
-      if (String(error.message).includes('UNIQUE')) throw new InputError('This email already has an account.', 409);
+      if (error?.code === '23505' || String(error.message).includes('UNIQUE')) {
+        throw new InputError('This email already has an account.', 409);
+      }
       throw error;
     }
-    const token = createToken(db, userId, 'verify', VERIFY_AGE_MS);
+    const token = await createToken(db, userId, 'verify', VERIFY_AGE_MS);
     try {
-      await sendEmail(config, email, 'Verify your UIUC Gym Buddy email',
+      await deliver(config, email, 'Verify your UIUC Gym Buddy email',
         `Use this link to verify your email and finish creating your account:\n\n${link(config, 'verify', token)}\n\nThis link expires in 30 minutes. If you did not request it, ignore this email.`);
     } catch (error) {
       // Avoid a stranded address after a failed first delivery. An existing
       // account is never deleted by resend or password-reset failures.
-      db.prepare('DELETE FROM users WHERE id = ?').run(userId);
+      await db.prepare('DELETE FROM users WHERE id = ?').run(userId);
       throw error;
     }
     res.status(202).json({ verificationRequired: true, message: 'Check your email for a verification link.' });
@@ -165,38 +220,37 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
       throw new InputError('The verification link is invalid.');
     }
     let userId;
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const row = db.prepare(`SELECT t.user_id, t.expires_at, e.verified_at FROM email_auth_tokens t
+    await transaction(db, async () => {
+      const row = await db.prepare(`SELECT t.user_id, t.expires_at, e.verified_at FROM email_auth_tokens t
         JOIN email_identities e ON e.user_id = t.user_id
         WHERE t.token_hash = ? AND t.purpose = 'verify'`).get(tokenHash(req.body.token));
       if (!row || row.expires_at <= Date.now() || row.verified_at) {
         throw new InputError('This verification link expired or was already used. Request a new link.', 400);
       }
       userId = row.user_id;
-      db.prepare('UPDATE email_identities SET verified_at = ? WHERE user_id = ?').run(Date.now(), userId);
-      db.prepare('DELETE FROM email_auth_tokens WHERE user_id = ? AND purpose = ?').run(userId, 'verify');
-      db.exec('COMMIT');
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
-    createSession(req, res, userId);
-    res.json({ user: profile(db.prepare('SELECT * FROM users WHERE id = ?').get(userId), true) });
+      await db.prepare('UPDATE email_identities SET verified_at = ? WHERE user_id = ?').run(Date.now(), userId);
+      await db.prepare('DELETE FROM email_auth_tokens WHERE user_id = ? AND purpose = ?').run(userId, 'verify');
+    });
+    await createSession(req, res, userId);
+    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    res.json({ user: profile(user, true) });
   }));
 
   app.post('/api/auth/email/resend', handle(async (req, res) => {
     const config = enabled();
     if (!onlyKeys(req.body, ['email'])) throw new InputError('Enter your email address.');
-    limited(db, 'resend-ip', req.ip, 10, 60 * 60 * 1000);
+    await limited(db, 'resend-ip', req.ip, 10, 60 * 60 * 1000);
     const email = normalizeEmail(req.body.email);
-    limited(db, 'resend-email', email, 3, 60 * 60 * 1000);
-    const user = db.prepare(`SELECT u.id FROM users u JOIN email_identities e ON e.user_id = u.id
+    await limited(db, 'resend-email', email, 3, 60 * 60 * 1000);
+    const user = await db.prepare(`SELECT u.id FROM users u JOIN email_identities e ON e.user_id = u.id
       WHERE u.email = ? AND e.verified_at IS NULL`).get(email);
     if (user) {
-      const token = createToken(db, user.id, 'verify', VERIFY_AGE_MS);
+      const token = await createToken(db, user.id, 'verify', VERIFY_AGE_MS);
       try {
-        await sendEmail(config, email, 'Verify your UIUC Gym Buddy email',
+        await deliver(config, email, 'Verify your UIUC Gym Buddy email',
           `Use this link to verify your email:\n\n${link(config, 'verify', token)}\n\nThis link expires in 30 minutes.`);
       } catch {
-        db.prepare('DELETE FROM email_auth_tokens WHERE token_hash = ?').run(tokenHash(token));
+        await db.prepare('DELETE FROM email_auth_tokens WHERE token_hash = ?').run(tokenHash(token));
         // Keep account existence private. Earlier delivered links still work.
       }
     }
@@ -206,37 +260,37 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
   app.post('/api/auth/email/login', handle(async (req, res) => {
     enabled();
     if (!onlyKeys(req.body, ['email', 'password'])) throw new InputError('Enter your email and password.');
-    limited(db, 'login-ip', req.ip, 20, 15 * 60 * 1000);
+    await limited(db, 'login-ip', req.ip, 20, 15 * 60 * 1000);
     const email = normalizeEmail(req.body.email);
     const password = req.body.password;
     if (typeof password !== 'string') throw new InputError('Enter your email and password.');
-    const user = db.prepare(`SELECT u.* FROM users u JOIN email_identities e ON e.user_id = u.id
+    const user = await db.prepare(`SELECT u.* FROM users u JOIN email_identities e ON e.user_id = u.id
       WHERE u.email = ?`).get(email);
     if (!user || !(await passwordMatches(password, user.password_salt, user.password_hash))) {
       throw new InputError('Email or password is incorrect.', 401);
     }
-    if (!hasVerifiedIdentity(db, user.id)) {
+    if (!await hasVerifiedIdentity(db, user.id)) {
       throw new InputError('Verify your email before signing in. You can request a new link.', 403);
     }
-    createSession(req, res, user.id);
+    await createSession(req, res, user.id);
     res.json({ user: profile(user, true) });
   }));
 
   app.post('/api/auth/email/reset/request', handle(async (req, res) => {
     const config = enabled();
     if (!onlyKeys(req.body, ['email'])) throw new InputError('Enter your email address.');
-    limited(db, 'reset-ip', req.ip, 10, 60 * 60 * 1000);
+    await limited(db, 'reset-ip', req.ip, 10, 60 * 60 * 1000);
     const email = normalizeEmail(req.body.email);
-    limited(db, 'reset-email', email, 3, 60 * 60 * 1000);
-    const user = db.prepare(`SELECT u.id FROM users u JOIN email_identities e ON e.user_id = u.id
+    await limited(db, 'reset-email', email, 3, 60 * 60 * 1000);
+    const user = await db.prepare(`SELECT u.id FROM users u JOIN email_identities e ON e.user_id = u.id
       WHERE u.email = ? AND e.verified_at IS NOT NULL`).get(email);
     if (user) {
-      const token = createToken(db, user.id, 'reset', RESET_AGE_MS);
+      const token = await createToken(db, user.id, 'reset', RESET_AGE_MS);
       try {
-        await sendEmail(config, email, 'Reset your UIUC Gym Buddy password',
+        await deliver(config, email, 'Reset your UIUC Gym Buddy password',
           `Use this link to set a new password:\n\n${link(config, 'reset', token)}\n\nThis link expires in 20 minutes. If you did not request it, ignore this email.`);
       } catch {
-        db.prepare('DELETE FROM email_auth_tokens WHERE token_hash = ?').run(tokenHash(token));
+        await db.prepare('DELETE FROM email_auth_tokens WHERE token_hash = ?').run(tokenHash(token));
         // Keep account existence private. Earlier delivered links still work.
       }
     }
@@ -248,20 +302,18 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
     if (!onlyKeys(req.body, ['token', 'password']) || !TOKEN_PATTERN.test(req.body.token || '')) {
       throw new InputError('The reset link is invalid.');
     }
-    limited(db, 'reset-complete-ip', req.ip, 20, 60 * 60 * 1000);
+    await limited(db, 'reset-complete-ip', req.ip, 20, 60 * 60 * 1000);
     const password = passwordField(req.body.password);
     const { salt, hash } = await hashPassword(password);
-    db.exec('BEGIN IMMEDIATE');
-    try {
-      const row = db.prepare(`SELECT t.user_id, t.expires_at FROM email_auth_tokens t
+    await transaction(db, async () => {
+      const row = await db.prepare(`SELECT t.user_id, t.expires_at FROM email_auth_tokens t
         JOIN email_identities e ON e.user_id = t.user_id
         WHERE t.token_hash = ? AND t.purpose = 'reset' AND e.verified_at IS NOT NULL`).get(tokenHash(req.body.token));
       if (!row || row.expires_at <= Date.now()) throw new InputError('This reset link expired or was already used.', 400);
-      db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?').run(hash, salt, row.user_id);
-      db.prepare('DELETE FROM email_auth_tokens WHERE user_id = ? AND purpose = ?').run(row.user_id, 'reset');
-      db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id);
-      db.exec('COMMIT');
-    } catch (error) { db.exec('ROLLBACK'); throw error; }
+      await db.prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?').run(hash, salt, row.user_id);
+      await db.prepare('DELETE FROM email_auth_tokens WHERE user_id = ? AND purpose = ?').run(row.user_id, 'reset');
+      await db.prepare('DELETE FROM sessions WHERE user_id = ?').run(row.user_id);
+    });
     res.clearCookie('uiuc_gym_buddy_session', {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production' || process.env.COOKIE_SECURE === 'true' || req.secure,

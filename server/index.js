@@ -49,8 +49,8 @@ if (db.kind === 'sqlite') db.exec(`
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
     day INTEGER NOT NULL,
     start TEXT NOT NULL,
-    end TEXT NOT NULL,
-    PRIMARY KEY (user_id, day, start, end)
+    "end" TEXT NOT NULL,
+    PRIMARY KEY (user_id, day, start, "end")
   );
   CREATE TABLE IF NOT EXISTS meetups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -60,7 +60,7 @@ if (db.kind === 'sqlite') db.exec(`
     date TEXT NOT NULL,
     day INTEGER NOT NULL,
     start TEXT NOT NULL,
-    end TEXT NOT NULL,
+    "end" TEXT NOT NULL,
     location TEXT NOT NULL,
     note TEXT NOT NULL DEFAULT '',
     status TEXT NOT NULL DEFAULT 'pending',
@@ -153,7 +153,7 @@ function matchProfile(row) {
 }
 
 function slotsFor(userId) {
-  return db.prepare('SELECT day, start, end FROM availability WHERE user_id = ? ORDER BY day, start')
+  return db.prepare('SELECT day, start, "end" FROM availability WHERE user_id = ? ORDER BY day, start')
     .all(userId);
 }
 
@@ -337,7 +337,7 @@ app.put('/api/availability', requireAuth, wrap(async (req, res) => {
     const slots = normalizeSlots(req.body.slots);
     await db.transaction(async () => {
       await db.prepare('DELETE FROM availability WHERE user_id = ?').run(req.user.id);
-      const insert = db.prepare('INSERT INTO availability (user_id, day, start, end) VALUES (?, ?, ?, ?)');
+      const insert = db.prepare('INSERT INTO availability (user_id, day, start, "end") VALUES (?, ?, ?, ?)');
       for (const slot of slots) await insert.run(req.user.id, slot.day, slot.start, slot.end);
     });
     res.json({ slots });
@@ -351,7 +351,7 @@ app.get('/api/matches', requireAuth, wrap(async (req, res) => {
     const slotsByUser = new Map();
     if (people.length) {
       const placeholders = people.map(() => '?').join(', ');
-      const otherSlots = await db.prepare(`SELECT user_id, day, start, end FROM availability
+      const otherSlots = await db.prepare(`SELECT user_id, day, start, "end" FROM availability
         WHERE user_id IN (${placeholders}) ORDER BY user_id, day, start`).all(...people.map(person => person.id));
       for (const slot of otherSlots) {
         const slots = slotsByUser.get(slot.user_id) || [];
@@ -404,7 +404,7 @@ app.get('/api/meetups', requireAuth, wrap(async (req, res) => {
 async function conflicts(userId, date, start, end, excludeId = -1) {
   return Boolean(await db.prepare(`SELECT 1 FROM meetups
     WHERE (from_user_id = ? OR to_user_id = ?) AND date = ? AND id != ?
-      AND status IN ('pending', 'accepted') AND start < ? AND end > ? LIMIT 1`)
+      AND status IN ('pending', 'accepted') AND start < ? AND "end" > ? LIMIT 1`)
     .get(userId, userId, date, excludeId, end, start));
 }
 
@@ -466,7 +466,7 @@ app.post('/api/meetups', requireAuth, wrap(async (req, res) => {
     }
     const createdAt = new Date(nowMs).toISOString();
     const result = await db.prepare(`INSERT INTO meetups
-      (from_user_id, to_user_id, activity, date, day, start, end, location, note, status, created_at)
+      (from_user_id, to_user_id, activity, date, day, start, "end", location, note, status, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
       .run(req.user.id, targetId, activity, date, weekday, req.body.start, req.body.end, location, note, createdAt);
     const row = await db.prepare(`${meetupSelect} WHERE m.id = ?`).get(result.lastInsertRowid);
@@ -493,7 +493,7 @@ app.patch('/api/meetups/:id', requireAuth, wrap(async (req, res) => {
       if (status === 'accepted') {
         // Another accepted workout can appear after the invitation was sent.
         const acceptedConflict = await db.prepare(`SELECT 1 FROM meetups WHERE id != ? AND date = ?
-          AND status = 'accepted' AND start < ? AND end > ?
+          AND status = 'accepted' AND start < ? AND "end" > ?
           AND (from_user_id IN (?, ?) OR to_user_id IN (?, ?)) LIMIT 1`)
           .get(id, row.date, row.end, row.start, row.from_user_id, row.to_user_id, row.from_user_id, row.to_user_id);
         if (acceptedConflict) throw new InputError('One of you already has a confirmed workout at that time.', 409);

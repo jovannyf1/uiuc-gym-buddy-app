@@ -137,7 +137,7 @@ test('workout invitations are rate limited per sender and per recipient', async 
     start: '17:00', end: '18:00', location: 'ARC', note: '',
   };
   const addPastInvitation = (recipientId) => db.prepare(`INSERT INTO meetups
-    (from_user_id, to_user_id, activity, date, day, start, end, location, status, created_at)
+    (from_user_id, to_user_id, activity, date, day, start, "end", location, status, created_at)
     VALUES (?, ?, 'Strength training', ?, 0, '17:00', '18:00', 'ARC', 'cancelled', ?)`)
     .run(sender.id, recipientId, date, new Date().toISOString());
 
@@ -164,7 +164,7 @@ test('blocking suppresses discovery and contact; reports are persisted and rate 
     method: 'PUT', body: { activity: 'Strength training', location: 'ARC' },
   });
   const meetup = db.prepare(`INSERT INTO meetups
-    (from_user_id, to_user_id, activity, date, day, start, end, location, status, created_at)
+    (from_user_id, to_user_id, activity, date, day, start, "end", location, status, created_at)
     VALUES (?, ?, 'Strength training', '2099-01-01', 0, '17:00', '18:00', 'ARC', 'pending', ?)`)
     .run(alice.id, bob.id, new Date().toISOString());
   const block = await request(alice, `/api/users/${bob.id}/block`, { method: 'POST' });

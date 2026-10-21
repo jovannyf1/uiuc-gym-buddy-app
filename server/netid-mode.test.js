@@ -53,13 +53,13 @@ async function request(user, endpoint, { method = 'GET', body } = {}) {
 test('production fails closed for old pilot sessions without exposing legacy matches or meetups', async () => {
   const currentStudent = student('Current Student', 1, true);
   const pilotAccount = student('Pilot Account', 2, false);
-  db.prepare('INSERT INTO availability (user_id, day, start, end) VALUES (?, 0, ?, ?)')
+  db.prepare('INSERT INTO availability (user_id, day, start, "end") VALUES (?, 0, ?, ?)')
     .run(pilotAccount.id, '17:00', '18:00');
 
   assert.equal((await request(pilotAccount, '/api/me')).status, 401);
   assert.deepEqual((await request(currentStudent, '/api/matches')).body, { matches: [] });
   const meetup = db.prepare(`INSERT INTO meetups
-    (from_user_id, to_user_id, activity, date, day, start, end, location, status, created_at)
+    (from_user_id, to_user_id, activity, date, day, start, "end", location, status, created_at)
     VALUES (?, ?, 'Strength training', '2099-01-01', 0, '17:00', '18:00', 'ARC', 'pending', ?)`)
     .run(currentStudent.id, pilotAccount.id, new Date().toISOString());
   assert.deepEqual((await request(currentStudent, '/api/meetups')).body, { meetups: [] });

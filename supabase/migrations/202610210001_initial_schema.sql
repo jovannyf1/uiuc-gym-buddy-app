@@ -30,8 +30,8 @@ CREATE TABLE IF NOT EXISTS availability (
   user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   day INTEGER NOT NULL,
   start TEXT NOT NULL,
-  end TEXT NOT NULL,
-  PRIMARY KEY (user_id, day, start, end)
+  "end" TEXT NOT NULL,
+  PRIMARY KEY (user_id, day, start, "end")
 );
 
 CREATE TABLE IF NOT EXISTS meetups (
@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS meetups (
   date TEXT NOT NULL,
   day INTEGER NOT NULL,
   start TEXT NOT NULL,
-  end TEXT NOT NULL,
+  "end" TEXT NOT NULL,
   location TEXT NOT NULL,
   note TEXT NOT NULL DEFAULT '',
   status TEXT NOT NULL DEFAULT 'pending',

@@ -157,7 +157,6 @@ export function initializeEmailAuth(db) {
 }
 
 export async function hasVerifiedIdentity(db, userId) {
-  if (await db.prepare(`SELECT 1 FROM netid_identities WHERE user_id = ?`).get(userId)) return true;
   return Boolean(await db.prepare(`SELECT 1 FROM email_identities WHERE user_id = ? AND verified_at IS NOT NULL`).get(userId));
 }
 
@@ -182,7 +181,7 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
     await limited(db, 'register-email', email, 3, 60 * 60 * 1000);
     const password = passwordField(req.body.password);
     if (await db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) {
-      throw new InputError('This email already has an account. Sign in or request a password reset; a pilot account needs migration.', 409);
+      throw new InputError('This email already has an account. Sign in or request a password reset.', 409);
     }
     const { salt, hash } = await hashPassword(password);
     let userId;

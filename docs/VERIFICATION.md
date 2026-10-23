@@ -6,15 +6,17 @@ The goal is a real workout plan between two people, not merely a successful buil
 
 | Promise a person can check | Evidence in this repository | Status |
 | --- | --- | --- |
-| An email account needs a verification link before sign-in; a wrong password is rejected; a reset link restores access. | `server/email-auth.test.js`, `server/email-smtp.test.js` | **Local automated pass.** Delivery is simulated; no real inbox or provider was checked. |
+| An email account needs a verification link before sign-in; a wrong password is rejected; a reset link restores access and ends old sessions. | `server/email-auth.test.js`, `server/email-smtp.test.js` | **Local automated pass.** Delivery is simulated; no real inbox or provider was checked. |
+| A production server offers email sign-in only. Old pilot or NetID accounts cannot access matches, chats, or meetups. | `server/netid-mode.test.js` | **Local automated pass.** The test exercises API access with a production setting. |
+| Email signup, verification, reset, and a changed password work with saved account data after reconnecting to PostgreSQL. | `server/postgres.integration.test.js`, run by the `postgres-integration` GitHub job | **CI pending for this change.** Locally skipped because `PG_TEST_URL` is not set. Email delivery in the check is simulated. |
 | Two people with no shared free time do not match; a 60-minute shared Monday window appears with the exact time. | `server/first-run.test.js`, `server/core.test.js` | **Local automated pass.** The test calls the API, not the visible website. |
 | Two verified people can chat, send a dated invitation, accept it, and both see the accepted plan. | `server/first-run.test.js` | **Local automated pass.** The test uses two separate sessions. |
 | Profiles, availability, chat, and the accepted invitation survive closing the local database. | `server/first-run.test.js` | **Local automated pass for SQLite.** Hosted Supabase persistence has not been checked in this run. |
 | A third person cannot open a private chat, and blocking prevents further contact. | `server/social.test.js` | **Local automated pass.** This is a focused access check, not a security audit. |
-| The built website opens and its entry form fits a phone-sized screen. | Opened the built site locally at 1280px and 390px widths. | **Local visual check passed for the entry screen only.** The signed-in screens were not visually checked. |
+| The website shows email signup, sign-in, and password-reset controls; unavailable email service prevents account submission; NetID is absent. | Opened the web app locally with simulated email configuration, then with sign-in disabled. | **Local browser check passed for these entry states only.** No email was sent or account submitted in this walkthrough. |
 | The installed website works on a phone and another person can finish a workout plan without coaching. | Follow the public-address check below. | **Untested.** No public address or device result is recorded here. |
 
-On October 23, `npm ci`, `npm --prefix client ci`, and `npm run build` passed. `npm test` reported **25 passed, 0 failed, 1 skipped**. The skipped test is the PostgreSQL integration test, which needs `PG_TEST_URL`. These results apply to the local checkout at commit `471ff82` with the verification test addition; they do not establish that a Vercel deployment or real email delivery works.
+On October 23, after the email-only changes, `npm ci`, `npm --prefix client ci`, and `npm run build` passed. `npm test` reported **25 passed, 0 failed, 1 skipped**. The skipped test is the PostgreSQL integration test, which needs `PG_TEST_URL` and will run in GitHub CI. The local checks found no failure in the tested paths; they do not establish that a Vercel deployment or real email delivery works. The Swift iPhone build could not run locally without Xcode; its GitHub CI check is still needed.
 
 ## Rerun after an edit
 

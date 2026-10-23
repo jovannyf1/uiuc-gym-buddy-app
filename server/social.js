@@ -138,8 +138,7 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
   }
 
   const trustedPredicate = column => verifiedIdentityRequired
-    ? `(EXISTS (SELECT 1 FROM netid_identities n WHERE n.user_id = ${column})
-      OR EXISTS (SELECT 1 FROM email_identities e WHERE e.user_id = ${column} AND e.verified_at IS NOT NULL))`
+    ? `EXISTS (SELECT 1 FROM email_identities e WHERE e.user_id = ${column} AND e.verified_at IS NOT NULL)`
     : '1 = 1';
 
   async function isBlocked(firstId, secondId) {

@@ -2,10 +2,6 @@ import SwiftUI
 
 struct AuthView: View {
     @EnvironmentObject private var store: AppStore
-    @State private var registering = false
-    @State private var name = ""
-    @State private var netID = ""
-    @State private var password = ""
     @State private var registeringEmail = false
     @State private var emailName = ""
     @State private var email = ""
@@ -31,64 +27,20 @@ struct AuthView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    if store.netIDAvailable {
-                        Button {
-                            submitNetID()
-                        } label: {
-                            Label("Sign in with Illinois NetID", systemImage: "person.badge.key.fill")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(busy)
-                    }
-
-                    if store.emailAuthAvailable {
-                        emailForm
-                    }
-
-                    if store.pilotAuthAvailable {
-                        Text("Local pilot account")
-                            .font(.headline)
-                        Picker("Account", selection: $registering) {
-                            Text("Sign in").tag(false)
-                            Text("Create account").tag(true)
-                        }
-                        .pickerStyle(.segmented)
-
-                        VStack(spacing: 14) {
-                            if registering {
-                                TextField("Your name", text: $name)
-                                    .textContentType(.name)
-                                    .textInputAutocapitalization(.words)
-                            }
-                            TextField("NetID or Illinois email", text: $netID)
-                                .textContentType(.username)
-                                .keyboardType(.emailAddress)
-                                .textInputAutocapitalization(.never)
-                                .autocorrectionDisabled()
-                            SecureField("Password", text: $password)
-                                .textContentType(registering ? .newPassword : .password)
-                            Text("This pilot account uses an @illinois.edu address. It is separate from campus NetID sign-in.")
-                                .font(.footnote)
-                                .foregroundStyle(.secondary)
-                        }
-                        .textFieldStyle(.roundedBorder)
-
-                        Button {
-                            submitPassword()
-                        } label: {
-                            if busy { ProgressView().frame(maxWidth: .infinity) }
-                            else { Text(registering ? "Create pilot account" : "Sign in to pilot account").frame(maxWidth: .infinity) }
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(busy || netID.trimmingCharacters(in: .whitespaces).isEmpty || password.isEmpty)
-                    }
-
-                    if !store.netIDAvailable && !store.pilotAuthAvailable && !store.emailAuthAvailable {
-                        Text("Sign-in is not configured on this server yet. Check the server address or ask the app operator to enable sign-in.")
+                    if store.emailAuthConfigurationLoading {
+                        Text("Checking email sign-in…")
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                    } else if !store.emailAuthAvailable {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Email sign-in setup pending")
+                                .font(.headline)
+                            Text(store.emailAuthConfigurationError ?? "Account creation and sign-in have not been connected on this server yet.")
+                                .font(.callout)
+                        }
+                        .foregroundStyle(.secondary)
                     }
+                    emailForm
 
                     if let error {
                         Text(error).foregroundStyle(.red).font(.callout)
@@ -130,7 +82,7 @@ struct AuthView: View {
                     .autocorrectionDisabled()
                     .textFieldStyle(.roundedBorder)
                 Button("Send password-reset link") { requestPasswordReset() }
-                    .disabled(busy || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(busy || !store.emailAuthAvailable || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Back to sign in") {
                     requestingPasswordReset = false
                     emailNotice = nil
@@ -149,7 +101,7 @@ struct AuthView: View {
                     .autocorrectionDisabled()
                     .textFieldStyle(.roundedBorder)
                 Button("Resend verification email") { resendVerification() }
-                    .disabled(busy || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .disabled(busy || !store.emailAuthAvailable || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Back to sign in") {
                     registeringEmail = false
                     awaitingVerification = false
@@ -180,7 +132,7 @@ struct AuthView: View {
                     .textFieldStyle(.roundedBorder)
 
                 if registeringEmail {
-                    Text("We’ll email a verification link before you can sign in. Verifying an address does not confirm student status.")
+                    Text("Use any email address you can verify. We’ll email a link before you can sign in. Your password must be at least 12 characters.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -190,8 +142,10 @@ struct AuthView: View {
                     else { Text(registeringEmail ? "Create email account" : "Sign in with email").frame(maxWidth: .infinity) }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(busy || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                .disabled(busy || !store.emailAuthAvailable
+                          || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                           || emailPassword.isEmpty
+                          || (registeringEmail && emailPassword.count < 12)
                           || (registeringEmail && emailName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
 
                 if !registeringEmail {
@@ -266,33 +220,6 @@ struct AuthView: View {
         }
     }
 
-    private func submitPassword() {
-        busy = true
-        error = nil
-        Task {
-            do {
-                if registering {
-                    try await store.register(name: name, netID: netID, password: password)
-                } else {
-                    try await store.login(netID: netID, password: password)
-                }
-                password = ""
-            } catch {
-                self.error = error.localizedDescription
-            }
-            busy = false
-        }
-    }
-
-    private func submitNetID() {
-        busy = true
-        error = nil
-        Task {
-            do { try await store.loginWithNetID() }
-            catch { self.error = error.localizedDescription }
-            busy = false
-        }
-    }
 }
 
 struct ServerSettingsView: View {
@@ -320,7 +247,7 @@ struct ServerSettingsView: View {
                     Button("Save server address") {
                         do {
                             try store.setServerURL(address)
-                            Task { await store.checkNetIDAvailability() }
+                            Task { await store.checkEmailAuthAvailability() }
                             dismiss()
                         } catch {
                             self.error = error.localizedDescription

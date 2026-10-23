@@ -8,7 +8,6 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createDatabase } from './database.js';
 import { previewImport } from './import.js';
-import { registerNetidRoutes } from './netid.js';
 import { registerSocialRoutes } from './social.js';
 import { emailAuthSettings, initializeEmailAuth, hasVerifiedIdentity, registerEmailRoutes } from './email-auth.js';
 import {
@@ -75,15 +74,13 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const MAX_MEETUPS_PER_DAY = 10;
 const MAX_MEETUPS_TO_ONE_STUDENT_PER_DAY = 3;
 const SESSION_COOKIE = 'uiuc_gym_buddy_session';
-const netidConfigured = [
-  process.env.ILLINOIS_OIDC_ISSUER, process.env.ILLINOIS_OIDC_CLIENT_ID,
-  process.env.ILLINOIS_OIDC_CLIENT_SECRET, process.env.ILLINOIS_OIDC_REDIRECT_URI,
-].every(Boolean);
 const emailAuthEnabled = Boolean(emailAuthSettings());
-const pilotAuthEnabled = !netidConfigured && !emailAuthEnabled
-  && (process.env.NODE_ENV !== 'production' || process.env.ALLOW_PILOT_AUTH === 'true');
-// Old local pilot addresses were never verified. In a configured deployment,
-// only a linked NetID or a verified mailbox may reach social data.
+// The legacy pilot path exists only for local fixtures. It cannot be enabled
+// on a deployed server, even when an old ALLOW_PILOT_AUTH value is present.
+const pilotAuthEnabled = process.env.NODE_ENV !== 'production'
+  && !process.env.VERCEL && !process.env.VERCEL_ENV
+  && db.kind === 'sqlite' && !emailAuthEnabled;
+// Old pilot and NetID identities do not establish verified email ownership.
 const verifiedIdentityRequired = !pilotAuthEnabled;
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -206,7 +203,7 @@ function requireAuth(req, res, next) {
     `).get(tokenHash(token), Date.now());
     if (!session) throw new InputError('Sign in to continue.', 401);
     if (verifiedIdentityRequired && !await hasVerifiedIdentity(db, session.id)) {
-      throw new InputError('Sign in with a verified email or Illinois NetID to continue.', 401);
+      throw new InputError('Sign in with a verified email to continue.', 401);
     }
     req.user = session;
   })().then(() => next(), next);
@@ -239,7 +236,7 @@ async function usersBlocked(firstId, secondId) {
 }
 
 app.post('/api/auth/register', wrap(async (req, res) => {
-  if (!pilotAuthEnabled) throw new InputError('Pilot sign-up is unavailable. Use verified email or Illinois NetID sign-in.', 403);
+  if (!pilotAuthEnabled) throw new InputError('Pilot sign-up is unavailable. Use verified email sign-in.', 403);
   if (!hasOnlyKeys(req.body, ['name', 'email', 'password'])) throw new InputError('Enter your name, Illinois email, and password.');
   const name = textField(req.body.name, 'Name', { min: 2, max: 80 });
   const email = textField(req.body.email, 'Email', { min: 1, max: 254 }).toLowerCase();
@@ -271,7 +268,7 @@ app.post('/api/auth/register', wrap(async (req, res) => {
 
 const loginFailures = new Map();
 app.post('/api/auth/login', wrap(async (req, res) => {
-  if (!pilotAuthEnabled) throw new InputError('Pilot sign-in is unavailable. Use verified email or Illinois NetID sign-in.', 403);
+  if (!pilotAuthEnabled) throw new InputError('Pilot sign-in is unavailable. Use verified email sign-in.', 403);
   if (!hasOnlyKeys(req.body, ['email', 'password'])) throw new InputError('Enter your email and password.');
   const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = req.body.password;
@@ -298,7 +295,7 @@ app.post('/api/auth/logout', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
-registerNetidRoutes({ app, db, createSession, profile, pilotAuthEnabled, emailAuthEnabled });
+app.get('/api/auth/config', (_req, res) => res.json({ emailAuthEnabled, pilotAuthEnabled }));
 registerEmailRoutes({ app, db, createSession, profile, hashPassword, passwordMatches });
 
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: profile(req.user, true) }));

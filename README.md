@@ -14,7 +14,7 @@ npm --prefix client install
 npm run dev
 ```
 
-Open **http://localhost:5173**. Create two pilot accounts in different browser sessions to try matching, chat, presence, and invitations. Pilot account addresses must end in `@illinois.edu`; this local sign-in checks the address format but does **not** verify mailbox ownership. Local data is saved to `data/app.db` and remains on this computer. Pilot password sign-in is disabled by default in production and whenever Illinois single sign-on is configured.
+Open **http://localhost:5173**. To test email signup and password reset locally, set `EMAIL_FROM`, `PUBLIC_APP_URL=http://localhost:5173`, and either SMTP credentials or `RESEND_API_KEY` in a private `.env` file. The email form stays unavailable when delivery is not configured, so a person cannot create an account without a verification message. Local data is saved to `data/app.db` and remains on this computer. The legacy pilot endpoints remain for local development fixtures but are not offered in the app and must stay disabled on public deployments.
 
 To run the built version, run `npm run build` followed by `npm start`, then open **http://localhost:8787**.
 
@@ -38,15 +38,9 @@ To publish the website on Vercel with saved accounts and chats, follow [the Verc
 
 A separate native SwiftUI iPhone app lives in [`ios/`](ios/). Its screens use the real API for profiles, schedule review, matching, presence, chat, and invitations. See [`ios/SETUP.md`](ios/SETUP.md) for Xcode, Apple signing, and iPhone setup. This repository includes an iOS Simulator build check on GitHub Actions; a physical iPhone build still needs a Mac with Xcode and an Apple signing account.
 
-## Sign-in choices
+## Sign in with email
 
-Verified email and password sign-in is available on the website and in the native iPhone app when a mail provider is configured with `EMAIL_FROM`, `PUBLIC_APP_URL`, and either SMTP credentials or `RESEND_API_KEY`. A person can sign up with **any email address they can verify**, set a password, open the verification link in their inbox, and then sign in. Password reset also uses an emailed link. The app never stores the email service password in the website or iPhone app. Email verification proves control of that mailbox, **not** enrollment at UIUC. The local pilot account form is separate and remains disabled in production once verified email sign-in is configured.
-
-Illinois NetID is a separate sign-in option. It is not required for an email-and-password account.
-
-The app has an OpenID Connect sign-in flow for Illinois NetID on the web and in the native iPhone app. It is **not active** until a University of Illinois identity application is registered and the four `ILLINOIS_OIDC_*` settings in [`.env.example`](.env.example) are configured. The app never asks for or stores a NetID password. The login button is hidden until sign-in is configured. University identity staff must confirm the approved issuer, app registration, redirect URI, and which claim establishes active student eligibility; a valid Illinois account alone does not establish that someone is a current student. Existing unverified pilot accounts require a reviewed migration before their data can be used with NetID sign-in.
-
-Illinois Technology Services describes [Shibboleth and Entra ID as supported SSO options](https://answers.illinois.edu/illinois/132408). This implementation uses a registered OIDC client and must be checked with campus identity staff before launch.
+Verified email and password sign-in is available on the website and in the native iPhone app when a mail provider is configured with `EMAIL_FROM`, `PUBLIC_APP_URL`, and either SMTP credentials or `RESEND_API_KEY`. A person can sign up with **any email address they can verify**, set a password, open the verification link in their inbox, and then sign in. Password reset uses an emailed link and signs out old sessions. Password hashes, email-verification status, and sessions are saved in the app database; on Vercel that database is Supabase Postgres. The app never stores the email service password in the website or iPhone app. Email verification proves control of that mailbox, **not** enrollment at UIUC. NetID sign-in is deferred and is not available in this version.
 
 ## What works in this version
 

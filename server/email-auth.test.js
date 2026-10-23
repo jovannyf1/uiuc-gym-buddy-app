@@ -22,11 +22,11 @@ process.env.NODE_ENV = 'production';
 process.env.RESEND_API_KEY = 're_test_key';
 process.env.EMAIL_FROM = 'Gym Buddy <hello@example.com>';
 process.env.PUBLIC_APP_URL = 'https://gym-buddy.example.com/';
-process.env.ALLOW_PILOT_AUTH = 'false';
-process.env.ILLINOIS_OIDC_ISSUER = '';
-process.env.ILLINOIS_OIDC_CLIENT_ID = '';
-process.env.ILLINOIS_OIDC_CLIENT_SECRET = '';
-process.env.ILLINOIS_OIDC_REDIRECT_URI = '';
+process.env.ALLOW_PILOT_AUTH = 'true';
+process.env.ILLINOIS_OIDC_ISSUER = 'https://identity.example.org';
+process.env.ILLINOIS_OIDC_CLIENT_ID = 'unused-client';
+process.env.ILLINOIS_OIDC_CLIENT_SECRET = 'unused-secret';
+process.env.ILLINOIS_OIDC_REDIRECT_URI = 'https://gym-buddy.example.com/api/auth/netid/callback';
 const dataDir = mkdtempSync(path.join(tmpdir(), 'gym-buddy-email-auth-'));
 process.env.DATA_DIR = dataDir;
 const { app, db } = await import('./index.js');
@@ -57,10 +57,15 @@ function tokenFromLastEmail(kind) {
 }
 
 test('verified email sign-up gates social access, rejects pilot identities, and resets password', async () => {
-  const config = await request('/api/auth/netid/config');
-  assert.deepEqual(config.body, { enabled: false, pilotAuthEnabled: false, emailAuthEnabled: true });
+  const config = await request('/api/auth/config');
+  assert.deepEqual(config.body, { pilotAuthEnabled: false, emailAuthEnabled: true });
+  assert.equal((await request('/api/auth/netid/config')).status, 404);
+  assert.equal((await request('/api/auth/netid/start')).status, 404);
   assert.equal((await request('/api/auth/register', {
     name: 'Pilot', email: 'pilot@illinois.edu', password: 'oldpassword',
+  })).status, 403);
+  assert.equal((await request('/api/auth/login', {
+    email: 'pilot@illinois.edu', password: 'oldpassword',
   })).status, 403);
 
   const registered = await request('/api/auth/email/register', {

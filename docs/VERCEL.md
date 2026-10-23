@@ -26,13 +26,13 @@ These secrets stay on the server. For Gmail, make an App Password in the Google 
 
 The existing app verifies email addresses itself and stores the hashed account credentials and sessions in Supabase Postgres. Every application table has row-level security enabled and no browser-role policies; the Express server uses the private database URI, so browsers cannot read account data through Supabase's Data API. Email verification confirms access to an inbox, not UIUC enrollment. The built-in Supabase Auth email sender is not used. If no SMTP credentials are set, email signup stays disabled rather than accepting unverified accounts.
 
-Keep `ALLOW_PILOT_AUTH=false`. `OPENAI_API_KEY` is optional for interpreting screenshot schedules; it is a separate API service and may have usage charges. Manual availability and `.ics` calendar imports do not need that key. Illinois NetID remains hidden until campus identity staff register an OIDC app and provide the four `ILLINOIS_OIDC_*` values.
+`OPENAI_API_KEY` is optional for interpreting screenshot schedules; it is a separate API service and may have usage charges. Manual availability and `.ics` calendar imports do not need that key. NetID sign-in is deferred and is not part of this launch. Production never enables the local pilot account endpoints.
 
 ## 3. Test the deployed app before sharing it
 
-After Vercel finishes its first production deployment, open the Vercel HTTPS address. Check that `/api/auth/netid/config` returns JSON, then test these paths in the app:
+After Vercel finishes its first production deployment, open the Vercel HTTPS address. Check that `/api/auth/config` returns JSON with `emailAuthEnabled: true`, then test these paths in the app:
 
-- Create an account using a real inbox, open its verification email, and sign in.
+- Create an account using a real inbox, open its verification email, and sign in. Try a wrong password, then request a reset email and sign in with a new password.
 - Edit the profile and availability; refresh and confirm both remain saved.
 - Use a second account in a separate browser to find a buddy, start a chat, and send a meetup invitation.
 - Upload a small `.ics` file and, if `OPENAI_API_KEY` is configured, a schedule screenshot under 4 MB.

@@ -179,8 +179,6 @@ function AuthScreen({ onAuth, error, message, busy, authOptions, linkAction,
     if (result?.resetRequested) setMode('reset-sent');
     if (result?.resetCompleted) { setPassword(''); setMode('login'); }
   }
-  const emailAvailable = authOptions.emailAuthEnabled || authOptions.pilotAuthEnabled;
-  const emailMode = authOptions.emailAuthEnabled;
   return <main className="auth-shell">
     <div className="auth-visual">
       <div className="auth-visual-top"><Brand /><span className="campus-pill">FIND YOUR WORKOUT CREW</span></div>
@@ -192,30 +190,25 @@ function AuthScreen({ onAuth, error, message, busy, authOptions, linkAction,
       </div>
       <div className="auth-visual-bottom"><span className="hero-kicker">YOUR CAMPUS. YOUR PACE. YOUR PEOPLE.</span><h1>Show up stronger,<br /><em>together.</em></h1><p>Find a workout buddy who fits your schedule, your goals, and your way of moving.</p></div>
     </div>
-    <div className="auth-panel"><div className="auth-panel-inner"><div className="auth-mobile-brand"><Brand /></div><span className="eyebrow">WELCOME TO UIUC GYM BUDDY</span><h2>{mode === 'login' ? 'Welcome back.' : 'Find your people.'}</h2><p className="auth-lede">Meet people who are ready to work out when you are.</p>
-      {authOptions.loading ? <p className="auth-lede" role="status">Checking sign-in options…</p> : <>
-        {authOptions.netidEnabled && <div className="netid-login"><a className="button button-primary button-full" href="/api/auth/netid/start">Sign in with Illinois NetID <Icon name="arrow" size={18} /></a><p>Your university sign-in opens next. You’ll return here when it’s complete.</p></div>}
-        {authOptions.netidEnabled && emailAvailable && <p className="auth-divider">or use your email</p>}
-        {emailAvailable ? <>
-          {authOptions.pilotAuthEnabled && <p className="auth-pilot-notice"><Icon name="info" size={18} /> Pilot sign-in: an @illinois.edu email address is required, but ownership is not verified yet.</p>}
-          {emailMode && mode === 'register' && <p className="auth-email-note">Email sign-up is open to any address. Verification confirms access to that inbox; it does not verify UIUC student status.</p>}
-          {(mode === 'register' || mode === 'login') && <div className="auth-tabs" role="group" aria-label="Account action"><button type="button" aria-pressed={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Create account</button><button type="button" aria-pressed={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button></div>}
-          {linkAction?.type === 'verify' && <p className="auth-status" role="status">Verifying your email…</p>}
-          {message && <p className="inline-success" role="status"><Icon name="check" size={16} />{message}</p>}
-          {error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}
-          {(mode === 'check-email' || mode === 'reset-sent') ? <div className="auth-followup"><p>{mode === 'check-email' ? 'Open the link in your inbox to finish creating your account.' : 'If your verified account exists, a password-reset link is on its way.'}</p>{mode === 'check-email' && <button type="button" className="link-button" disabled={busy} onClick={() => onAuth('resend', { email })}>Send another verification link</button>}<button type="button" className="link-button" onClick={() => setMode('login')}>Back to sign in</button></div> :
-          <form className="auth-form" onSubmit={submit}>
-            {mode === 'register' && <label>Full name<input type="text" autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" required maxLength={80} /></label>}
-            {mode !== 'reset-complete' && <label>Email address<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder={emailMode ? 'you@example.com' : 'you@illinois.edu'} required /></label>}
-            {(mode === 'register' || mode === 'login' || mode === 'reset-complete') && <label>{mode === 'reset-complete' ? 'New password' : 'Password'}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'register' || mode === 'reset-complete' ? (emailMode ? 'At least 12 characters' : 'At least 8 characters') : 'Your password'} required minLength={mode === 'login' ? 1 : emailMode ? 12 : 8} /></label>}
-            <button className="button button-primary button-full" type="submit" disabled={busy || linkAction?.type === 'verify'}>{busy ? 'Just a moment…' : mode === 'register' ? (emailMode ? 'Create account' : 'Create my pilot account') : mode === 'reset-request' ? 'Email reset link' : mode === 'reset-complete' ? 'Set new password' : 'Sign in'}<Icon name="arrow" size={18} /></button>
-            {emailMode && mode === 'login' && <button type="button" className="link-button auth-helper" onClick={() => setMode('reset-request')}>Forgot password?</button>}
-            {emailMode && mode === 'login' && <button type="button" className="link-button auth-helper" disabled={!email.trim() || busy} onClick={() => onAuth('resend', { email })}>Resend verification link</button>}
-            {emailMode && mode === 'reset-request' && <button type="button" className="link-button auth-helper" onClick={() => setMode('login')}>Back to sign in</button>}
-            {emailMode && mode === 'reset-complete' && <button type="button" className="link-button auth-helper" onClick={() => signedIn ? onCancelLink() : setMode('login')}>{signedIn ? 'Back to app' : 'Back to sign in'}</button>}
-          </form>}
-        </> : !authOptions.netidEnabled && <div className="auth-pending" role="status"><Icon name="lock" size={23} /><h3>Sign-in setup pending</h3><p>Sign-in has not been connected yet. Please check back after the app is configured.</p></div>}
-      </>}
+    <div className="auth-panel"><div className="auth-panel-inner"><div className="auth-mobile-brand"><Brand /></div><span className="eyebrow">WELCOME TO UIUC GYM BUDDY</span><h2>{mode === 'login' ? 'Welcome back.' : mode === 'reset-request' ? 'Reset your password.' : mode === 'reset-complete' ? 'Choose a new password.' : mode === 'check-email' || mode === 'reset-sent' ? 'Check your email.' : 'Find your people.'}</h2><p className="auth-lede">Meet people who are ready to work out when you are.</p>
+      {authOptions.loading ? <p className="auth-status" role="status">Checking email sign-in…</p>
+        : !authOptions.emailAuthEnabled && <div className="auth-pending" role="status"><Icon name="lock" size={23} /><h3>Email sign-in setup pending</h3><p>{authOptions.error || 'Account creation and sign-in have not been connected on this server yet.'}</p></div>}
+      {mode === 'register' && <p className="auth-email-note">Use any email address you can verify. We’ll send a link to confirm it before you sign in.</p>}
+      {(mode === 'register' || mode === 'login') && <div className="auth-tabs" role="group" aria-label="Account action"><button type="button" aria-pressed={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Create account</button><button type="button" aria-pressed={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button></div>}
+      {linkAction?.type === 'verify' && <p className="auth-status" role="status">Verifying your email…</p>}
+      {message && <p className="inline-success" role="status"><Icon name="check" size={16} />{message}</p>}
+      {error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}
+      {(mode === 'check-email' || mode === 'reset-sent') ? <div className="auth-followup"><p>{mode === 'check-email' ? 'Open the link in your inbox to finish creating your account.' : 'If your verified account exists, a password-reset link is on its way.'}</p>{mode === 'check-email' && <button type="button" className="link-button" disabled={busy || !authOptions.emailAuthEnabled} onClick={() => onAuth('resend', { email })}>Send another verification link</button>}<button type="button" className="link-button" onClick={() => setMode('login')}>Back to sign in</button></div> :
+      <form className="auth-form" onSubmit={submit}>
+        {mode === 'register' && <label>Full name<input type="text" autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" required maxLength={80} /></label>}
+        {mode !== 'reset-complete' && <label>Email address<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required /></label>}
+        {(mode === 'register' || mode === 'login' || mode === 'reset-complete') && <label>{mode === 'reset-complete' ? 'New password' : 'Password'}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'login' ? 'Your password' : 'At least 12 characters'} required minLength={mode === 'login' ? 1 : 12} /></label>}
+        <button className="button button-primary button-full" type="submit" disabled={busy || !authOptions.emailAuthEnabled || linkAction?.type === 'verify'}>{busy ? 'Just a moment…' : mode === 'register' ? 'Create account' : mode === 'reset-request' ? 'Email reset link' : mode === 'reset-complete' ? 'Set new password' : 'Sign in'}<Icon name="arrow" size={18} /></button>
+        {mode === 'login' && <button type="button" className="link-button auth-helper" onClick={() => setMode('reset-request')}>Forgot password?</button>}
+        {mode === 'login' && <button type="button" className="link-button auth-helper" disabled={!email.trim() || busy || !authOptions.emailAuthEnabled} onClick={() => onAuth('resend', { email })}>Resend verification link</button>}
+        {mode === 'reset-request' && <button type="button" className="link-button auth-helper" onClick={() => setMode('login')}>Back to sign in</button>}
+        {mode === 'reset-complete' && <button type="button" className="link-button auth-helper" onClick={() => signedIn ? onCancelLink() : setMode('login')}>{signedIn ? 'Back to app' : 'Back to sign in'}</button>}
+      </form>}
       <p className="auth-footnote"><Icon name="shield" size={17} /> Your schedule is reviewed before any free times are added to your profile.</p>
     </div></div>
   </main>;
@@ -419,8 +412,7 @@ export default function App() {
     return match ? { type: match[1], token: match[2] } : null;
   });
   const processedVerifyLink = useRef(null);
-  const [authOptions, setAuthOptions] = useState({ loading: true, netidEnabled: false,
-    pilotAuthEnabled: false, emailAuthEnabled: false });
+  const [authOptions, setAuthOptions] = useState({ loading: true, emailAuthEnabled: false, error: '' });
   const [me, setMe] = useState(null);
   const [view, setView] = useState('home');
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -443,7 +435,7 @@ export default function App() {
     if (failed) setNotice({ type: 'error', text: failed.reason.message || 'Some information could not load.' });
   }
   useEffect(() => { let active = true; (async () => { try { const data = await api('/api/me'); if (active) { setMe(data?.user || data?.me || data); await refreshData(); } } catch (e) { if (active && !/401|unauthorized|not authenticated|sign in to continue/i.test(e.message)) setAuthError(e.message); } finally { if (active) setChecking(false); } })(); return () => { active = false; }; }, []);
-  useEffect(() => { let active = true; api('/api/auth/netid/config').then(data => { if (active) setAuthOptions({ loading: false, netidEnabled: Boolean(data?.enabled), pilotAuthEnabled: Boolean(data?.pilotAuthEnabled), emailAuthEnabled: Boolean(data?.emailAuthEnabled) }); }).catch(() => { if (active) setAuthOptions({ loading: false, netidEnabled: false, pilotAuthEnabled: false, emailAuthEnabled: false }); }); return () => { active = false; }; }, []);
+  useEffect(() => { let active = true; api('/api/auth/config').then(data => { if (active) setAuthOptions({ loading: false, emailAuthEnabled: Boolean(data?.emailAuthEnabled), error: '' }); }).catch(() => { if (active) setAuthOptions({ loading: false, emailAuthEnabled: false, error: 'Could not check email sign-in. Check your connection and try reloading.' }); }); return () => { active = false; }; }, []);
   useEffect(() => {
     const onHashChange = () => {
       const match = /^#(verify|reset)=([A-Za-z0-9_-]{43})$/.exec(window.location.hash);
@@ -502,11 +494,9 @@ export default function App() {
         setAuthMessage('Password changed. Sign in with your new password.');
         return { resetCompleted: true };
       }
-      const emailMode = authOptions.emailAuthEnabled;
-      const endpoint = emailMode ? `/api/auth/email/${mode}` : `/api/auth/${mode}`;
       const payload = mode === 'register' ? { name: values.name, email: values.email, password: values.password }
         : { email: values.email, password: values.password };
-      const result = await api(endpoint, { method: 'POST', body: JSON.stringify(payload) });
+      const result = await api(`/api/auth/email/${mode}`, { method: 'POST', body: JSON.stringify(payload) });
       if (result?.verificationRequired) {
         setAuthMessage(result.message || 'Check your email for a verification link.');
         return result;

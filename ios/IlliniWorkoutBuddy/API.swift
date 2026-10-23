@@ -1,9 +1,5 @@
 import Foundation
 import Combine
-import AuthenticationServices
-import CryptoKit
-import Security
-import UIKit
 
 struct APIError: LocalizedError {
     let message: String
@@ -90,49 +86,6 @@ final class APIClient {
 }
 
 @MainActor
-private final class NetIDBrowser: NSObject, ASWebAuthenticationPresentationContextProviding {
-    private var session: ASWebAuthenticationSession?
-
-    func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
-        UIApplication.shared.connectedScenes
-            .compactMap { $0 as? UIWindowScene }
-            .flatMap(\.windows)
-            .first(where: \.isKeyWindow) ?? ASPresentationAnchor()
-    }
-
-    func authorizationCode(from url: URL) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
-            let session = ASWebAuthenticationSession(url: url, callbackURLScheme: "uiucgymbuddy") { [weak self] callback, error in
-                Task { @MainActor in
-                    self?.session = nil
-                    if let error {
-                        continuation.resume(throwing: error)
-                        return
-                    }
-                    guard let callback,
-                          callback.scheme == "uiucgymbuddy",
-                          callback.host == "auth-callback",
-                          let code = URLComponents(url: callback, resolvingAgainstBaseURL: false)?
-                            .queryItems?.first(where: { $0.name == "code" })?.value,
-                          !code.isEmpty else {
-                        continuation.resume(throwing: APIError(message: "Illinois sign-in did not return an authorization code.", statusCode: nil))
-                        return
-                    }
-                    continuation.resume(returning: code)
-                }
-            }
-            session.presentationContextProvider = self
-            session.prefersEphemeralWebBrowserSession = false
-            self.session = session
-            if !session.start() {
-                self.session = nil
-                continuation.resume(throwing: APIError(message: "Could not open Illinois sign-in.", statusCode: nil))
-            }
-        }
-    }
-}
-
-@MainActor
 final class AppStore: ObservableObject {
     @Published var baseURLText: String
     @Published var currentUser: UserProfile?
@@ -145,12 +98,10 @@ final class AppStore: ObservableObject {
     @Published var blockedUsers: [UserProfile] = []
     @Published var loadingSession = true
     @Published var errorMessage: String?
-    @Published var netIDAvailable = false
-    @Published var pilotAuthAvailable = false
     @Published var emailAuthAvailable = false
-
+    @Published var emailAuthConfigurationLoading = true
+    @Published var emailAuthConfigurationError: String?
     private var api: APIClient
-    private let netIDBrowser = NetIDBrowser()
 
     init() {
         let saved = UserDefaults.standard.string(forKey: "serverBaseURL") ?? "http://localhost:8787"
@@ -179,14 +130,14 @@ final class AppStore: ObservableObject {
         nearby = []
         presence = nil
         blockedUsers = []
-        netIDAvailable = false
-        pilotAuthAvailable = false
         emailAuthAvailable = false
+        emailAuthConfigurationLoading = true
+        emailAuthConfigurationError = nil
     }
 
     func restoreSession() async {
         defer { loadingSession = false }
-        await checkNetIDAvailability()
+        await checkEmailAuthAvailability()
         do {
             let result: UserEnvelope = try await api.request("api/me")
             currentUser = result.user
@@ -198,49 +149,17 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func checkNetIDAvailability() async {
-        let result: NetIDConfigEnvelope? = try? await api.request("api/auth/netid/config")
-        netIDAvailable = result?.enabled == true
-        pilotAuthAvailable = result?.pilotAuthEnabled == true
-        emailAuthAvailable = result?.emailAuthEnabled == true
-    }
-
-    func loginWithNetID() async throws {
-        guard netIDAvailable else {
-            throw APIError(message: "Illinois NetID sign-in is not configured on this server yet.", statusCode: nil)
+    func checkEmailAuthAvailability() async {
+        emailAuthConfigurationLoading = true
+        defer { emailAuthConfigurationLoading = false }
+        do {
+            let result: EmailAuthConfigEnvelope = try await api.request("api/auth/config")
+            emailAuthAvailable = result.emailAuthEnabled
+            emailAuthConfigurationError = nil
+        } catch {
+            emailAuthAvailable = false
+            emailAuthConfigurationError = "Could not check email sign-in. Check the server address and your connection."
         }
-        var random = [UInt8](repeating: 0, count: 32)
-        guard SecRandomCopyBytes(kSecRandomDefault, random.count, &random) == errSecSuccess else {
-            throw APIError(message: "Could not start secure sign-in. Please try again.", statusCode: nil)
-        }
-        let verifier = Self.base64URL(Data(random))
-        let challenge = Self.base64URL(Data(SHA256.hash(data: Data(verifier.utf8))))
-        var components = URLComponents(url: api.baseURL.appendingPathComponent("api/auth/netid/start"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "native", value: "1"),
-            URLQueryItem(name: "code_challenge", value: challenge)
-        ]
-        let code = try await netIDBrowser.authorizationCode(from: components.url!)
-        let body = try api.encode(NativeNetIDCompletePayload(code: code, verifier: verifier))
-        let result: UserEnvelope = try await api.request("api/auth/netid/native/complete", method: "POST", body: body)
-        currentUser = result.user
-        try await refreshAll()
-    }
-
-    func register(name: String, netID: String, password: String) async throws {
-        let email = Self.email(for: netID)
-        let body = try api.encode(RegisterPayload(name: name, email: email, password: password))
-        let result: UserEnvelope = try await api.request("api/auth/register", method: "POST", body: body)
-        currentUser = result.user
-        try await refreshAll()
-    }
-
-    func login(netID: String, password: String) async throws {
-        let email = Self.email(for: netID)
-        let body = try api.encode(LoginPayload(email: email, password: password))
-        let result: UserEnvelope = try await api.request("api/auth/login", method: "POST", body: body)
-        currentUser = result.user
-        try await refreshAll()
     }
 
     func registerEmail(name: String, email: String, password: String) async throws -> String {
@@ -415,14 +334,4 @@ final class AppStore: ObservableObject {
         let _: ReportEnvelope = try await api.request("api/users/\(id)/report", method: "POST", body: body)
     }
 
-    private static func email(for input: String) -> String {
-        let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return trimmed.contains("@") ? trimmed : "\(trimmed)@illinois.edu"
-    }
-
-    private static func base64URL(_ data: Data) -> String {
-        data.base64EncodedString().replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
-    }
 }

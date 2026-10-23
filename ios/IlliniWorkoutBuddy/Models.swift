@@ -171,10 +171,6 @@ struct PresencePayload: Encodable {
 }
 struct ChatCreatePayload: Encodable { let toUserId: Int }
 struct MessagePayload: Encodable { let text: String }
-struct NativeNetIDCompletePayload: Encodable {
-    let code: String
-    let verifier: String
-}
 struct ReportPayload: Encodable {
     let reason: String
     let details: String
@@ -203,11 +199,7 @@ struct ChatEnvelope: Decodable { let chat: ChatSummary }
 struct MessagesEnvelope: Decodable { let messages: [ChatMessage] }
 struct MessageEnvelope: Decodable { let message: ChatMessage }
 struct OKEnvelope: Decodable { let ok: Bool }
-struct NetIDConfigEnvelope: Decodable {
-    let enabled: Bool
-    let pilotAuthEnabled: Bool
-    let emailAuthEnabled: Bool?
-}
+struct EmailAuthConfigEnvelope: Decodable { let emailAuthEnabled: Bool }
 struct EmailRegistrationEnvelope: Decodable {
     let verificationRequired: Bool
     let message: String

@@ -34,6 +34,8 @@ The responsive website includes an installable Home Screen experience. After it 
 
 To publish the website on Vercel with saved accounts and chats, follow [the Vercel and Supabase hosting guide](docs/VERCEL.md). The free setup runs the website and API on Vercel and stores persistent data in Supabase Postgres; no separate paid server is needed.
 
+[How to know the app works](docs/VERIFICATION.md) records local evidence and the checks to run at the public address before sharing it.
+
 A separate native SwiftUI iPhone app lives in [`ios/`](ios/). Its screens use the real API for profiles, schedule review, matching, presence, chat, and invitations. See [`ios/SETUP.md`](ios/SETUP.md) for Xcode, Apple signing, and iPhone setup. This repository includes an iOS Simulator build check on GitHub Actions; a physical iPhone build still needs a Mac with Xcode and an Apple signing account.
 
 ## Sign-in choices

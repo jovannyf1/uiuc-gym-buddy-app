@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { chicagoNow } from './core.js';
 
 const dataDir = mkdtempSync(path.join(tmpdir(), 'gym-buddy-first-run-'));
 process.env.DATA_DIR = dataDir;
@@ -74,26 +75,39 @@ async function verifiedStudent(name, email) {
   return { id: verified.body.user.id, cookie: verified.cookie };
 }
 
-test('two new verified students can set profiles, find a shared time, chat, and persist their data', async () => {
+test('two new verified students can find a shared time, agree on a workout, and persist their data', async () => {
   const alice = await verifiedStudent('Alice Test', 'alice@example.com');
   const bob = await verifiedStudent('Bob Test', 'bob@example.com');
   const profile = {
     activities: ['Strength training'], locations: ['ARC'],
     experience: 'beginner', bio: 'Looking for a weekday gym buddy.',
   };
-  const slots = [{ day: 0, start: '17:00', end: '18:30' }];
   for (const student of [alice, bob]) {
     assert.equal((await request('/api/me', { method: 'PATCH', cookie: student.cookie, body: profile })).status, 200);
-    assert.equal((await request('/api/availability', {
-      method: 'PUT', cookie: student.cookie, body: { slots },
-    })).status, 200);
   }
+  assert.equal((await request('/api/availability', {
+    method: 'PUT', cookie: alice.cookie,
+    body: { slots: [{ day: 0, start: '17:00', end: '18:30' }] },
+  })).status, 200);
+  assert.equal((await request('/api/availability', {
+    method: 'PUT', cookie: bob.cookie,
+    body: { slots: [{ day: 1, start: '17:30', end: '18:30' }] },
+  })).status, 200);
+  assert.deepEqual((await request('/api/matches', { cookie: alice.cookie })).body.matches, [],
+    'Students free on different days should not match');
+
+  assert.equal((await request('/api/availability', {
+    method: 'PUT', cookie: bob.cookie,
+    body: { slots: [{ day: 0, start: '17:30', end: '18:30' }] },
+  })).status, 200);
 
   const matches = await request('/api/matches', { cookie: alice.cookie });
   assert.equal(matches.status, 200);
   assert.equal(matches.body.matches.length, 1);
   assert.equal(matches.body.matches[0].user.id, bob.id);
-  assert.ok(matches.body.matches[0].overlaps.some(slot => slot.day === 0 && slot.start === '17:00'));
+  assert.deepEqual(matches.body.matches[0].overlaps,
+    [{ day: 0, start: '17:30', end: '18:30' }]);
+  assert.equal('email' in matches.body.matches[0].user, false);
 
   const started = await request('/api/chats', {
     method: 'POST', cookie: alice.cookie, body: { toUserId: bob.id },
@@ -108,6 +122,28 @@ test('two new verified students can set profiles, find a shared time, chat, and 
   assert.equal(inbox.status, 200);
   assert.equal(inbox.body.messages[0].text, 'Want to meet at ARC on Monday?');
 
+  const nextMonday = new Date(`${chicagoNow().date}T12:00:00Z`);
+  const today = (nextMonday.getUTCDay() + 6) % 7;
+  nextMonday.setUTCDate(nextMonday.getUTCDate() + (7 - today));
+  const date = nextMonday.toISOString().slice(0, 10);
+  const invite = await request('/api/meetups', {
+    method: 'POST', cookie: alice.cookie,
+    body: {
+      toUserId: bob.id, activity: 'Strength training', location: 'ARC',
+      date, day: 0, start: '17:30', end: '18:00', note: 'Meet at the entrance',
+    },
+  });
+  assert.equal(invite.status, 201);
+  assert.equal(invite.body.meetup.status, 'pending');
+  const meetupId = invite.body.meetup.id;
+  assert.equal((await request(`/api/meetups/${meetupId}`, {
+    method: 'PATCH', cookie: bob.cookie, body: { status: 'accepted' },
+  })).body.meetup.status, 'accepted');
+  assert.equal((await request('/api/meetups', { cookie: alice.cookie })).body.meetups[0].status,
+    'accepted');
+  assert.equal((await request('/api/meetups', { cookie: bob.cookie })).body.meetups[0].status,
+    'accepted');
+
   await new Promise((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
   db.close();
   closed = true;
@@ -117,5 +153,7 @@ test('two new verified students can set profiles, find a shared time, chat, and 
     assert.equal(saved.prepare('SELECT COUNT(*) AS count FROM availability').get().count, 2);
     assert.equal(saved.prepare('SELECT body FROM chat_messages WHERE chat_id = ?').get(chatId).body,
       'Want to meet at ARC on Monday?');
+    assert.equal(saved.prepare('SELECT status FROM meetups WHERE id = ?').get(meetupId).status,
+      'accepted');
   } finally { saved.close(); }
 });

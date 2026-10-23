@@ -1,0 +1,21 @@
+name: iOS build
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  simulator-build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build native iPhone app for Simulator
+        run: >-
+          xcodebuild
+          -project ios/IlliniWorkoutBuddy.xcodeproj
+          -scheme IlliniWorkoutBuddy
+          -configuration Debug
+          -sdk iphonesimulator
+          -destination 'generic/platform=iOS Simulator'
+          CODE_SIGNING_ALLOWED=NO
+          build

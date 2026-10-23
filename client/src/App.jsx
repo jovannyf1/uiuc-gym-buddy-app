@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { ChatsPage, PresencePage } from './Social.jsx';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const SHORT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -7,6 +8,8 @@ const LOCATIONS = ['ARC', 'CRCE'];
 const NAV = [
   { id: 'home', label: 'Overview', icon: 'home' },
   { id: 'matches', label: 'Find a buddy', icon: 'users' },
+  { id: 'now', label: 'Working out now', icon: 'bolt' },
+  { id: 'chats', label: 'Chats', icon: 'chat' },
   { id: 'availability', label: 'My availability', icon: 'calendar' },
   { id: 'import', label: 'Import schedule', icon: 'upload' },
   { id: 'meetups', label: 'Meetups', icon: 'meetup' },
@@ -54,6 +57,11 @@ function Icon({ name, size = 20, strokeWidth = 1.8, className = '' }) {
     image: <><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="m21 15-5-5L5 21" /></>,
     lock: <><rect x="4" y="10" width="16" height="11" rx="2" /><path d="M8 10V7a4 4 0 0 1 8 0v3" /></>,
     menu: <path d="M3 6h18M3 12h18M3 18h18" />,
+    chat: <><path d="M21 11.5a8.4 8.4 0 0 1-.9 3.8A8.5 8.5 0 0 1 12.5 20a8.4 8.4 0 0 1-3.8-.9L3 21l1.9-5.7a8.4 8.4 0 0 1-.9-3.8A8.5 8.5 0 0 1 12.5 3 8.5 8.5 0 0 1 21 11.5Z" /><path d="M8 11.5h9" /></>,
+    bolt: <path d="m13 2-9 12h7l-1 8 10-12h-7l1-8Z" />,
+    send: <><path d="m22 2-7 20-4-9-9-4L22 2Z" /><path d="M22 2 11 13" /></>,
+    flag: <><path d="M5 21V4m0 1c5-4 9 4 15 0v12c-6 4-10-4-15 0" /></>,
+    block: <><circle cx="12" cy="12" r="9" /><path d="m5.6 5.6 12.8 12.8" /></>,
   };
   return <svg className={className} width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" {...common}>{shapes[name] || shapes.spark}</svg>;
 }
@@ -83,6 +91,12 @@ function formatDate(date) {
   if (!date) return '';
   const parsed = new Date(`${date}T12:00:00`);
   return Number.isNaN(parsed.getTime()) ? date : parsed.toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
+}
+function formatCampusTime(dateTime) {
+  const parsed = new Date(dateTime);
+  return Number.isNaN(parsed.getTime()) ? '' : new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago', hour: 'numeric', minute: '2-digit', timeZoneName: 'short',
+  }).format(parsed);
 }
 function localISO(date) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
@@ -135,7 +149,7 @@ function suggestedWorkoutWindow(slot) {
 function previewDay(value) {
   return /^\d{4}-\d{2}-\d{2}$/.test(String(value)) ? formatDate(value) : DAYS[Number(value)] || 'Unknown day';
 }
-function personName(person) { return typeof person === 'string' ? person : person?.name || 'Student'; }
+function personName(person) { return typeof person === 'string' ? person : person?.name || 'Member'; }
 function personId(person) { return typeof person === 'object' ? person?.id : person; }
 function labelForGender(value) {
   return ({ male: 'Man', female: 'Woman', nonbinary: 'Nonbinary', 'prefer-not-to-say': 'Not specified' })[value] || '';
@@ -150,18 +164,24 @@ function Notice({ type = 'success', children, onClose }) {
   return <div className={`notice notice-${type}`} role="status"><Icon name={type === 'error' ? 'alert' : 'check'} size={18} /><span>{children}</span><button type="button" className="icon-button" aria-label="Dismiss message" onClick={onClose}><Icon name="close" size={16} /></button></div>;
 }
 
-function AuthScreen({ onAuth, error, busy }) {
-  const [mode, setMode] = useState('register');
+function AuthScreen({ onAuth, error, message, busy, authOptions, linkAction,
+  signedIn = false, onCancelLink }) {
+  const [mode, setMode] = useState(linkAction?.type === 'reset' ? 'reset-complete' : 'register');
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  function submit(event) {
+  useEffect(() => { if (linkAction?.type === 'reset') setMode('reset-complete'); }, [linkAction]);
+  async function submit(event) {
     event.preventDefault();
-    onAuth(mode, { name: name.trim(), email: email.trim(), password });
+    const result = await onAuth(mode, { name: name.trim(), email: email.trim(), password,
+      token: linkAction?.type === 'reset' ? linkAction.token : undefined });
+    if (result?.verificationRequired) setMode('check-email');
+    if (result?.resetRequested) setMode('reset-sent');
+    if (result?.resetCompleted) { setPassword(''); setMode('login'); }
   }
   return <main className="auth-shell">
     <div className="auth-visual">
-      <div className="auth-visual-top"><Brand /><span className="campus-pill">BUILT FOR UIUC STUDENTS</span></div>
+      <div className="auth-visual-top"><Brand /><span className="campus-pill">FIND YOUR WORKOUT CREW</span></div>
       <div className="auth-visual-center">
         <div className="auth-orbit orbit-one" /><div className="auth-orbit orbit-two" />
         <div className="auth-large-icon"><Icon name="dumbbell" size={80} strokeWidth={1.25} /></div>
@@ -170,9 +190,25 @@ function AuthScreen({ onAuth, error, busy }) {
       </div>
       <div className="auth-visual-bottom"><span className="hero-kicker">YOUR CAMPUS. YOUR PACE. YOUR PEOPLE.</span><h1>Show up stronger,<br /><em>together.</em></h1><p>Find a workout buddy who fits your schedule, your goals, and your way of moving.</p></div>
     </div>
-    <div className="auth-panel"><div className="auth-panel-inner"><div className="auth-mobile-brand"><Brand /></div><span className="eyebrow">WELCOME TO UIUC GYM BUDDY</span><h2>{mode === 'register' ? 'Find your people.' : 'Welcome back.'}</h2><p className="auth-lede">{mode === 'register' ? 'Create your account to meet students who are ready to move with you.' : 'Sign in and make your next workout happen.'}</p>
-      <div className="auth-tabs" role="group" aria-label="Account action"><button type="button" aria-pressed={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Create account</button><button type="button" aria-pressed={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button></div>
-      <form className="auth-form" onSubmit={submit}>{mode === 'register' && <label>Full name<input type="text" autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" required maxLength={80} /></label>}<label>Email address<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@illinois.edu" required /></label><label>Password<input type="password" autoComplete={mode === 'register' ? 'new-password' : 'current-password'} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'register' ? 'At least 8 characters' : 'Your password'} required minLength={mode === 'register' ? 8 : 1} /></label>{error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}<button className="button button-primary button-full" type="submit" disabled={busy}>{busy ? 'Just a moment…' : mode === 'register' ? 'Create my account' : 'Sign in'}<Icon name="arrow" size={18} /></button></form>
+    <div className="auth-panel"><div className="auth-panel-inner"><div className="auth-mobile-brand"><Brand /></div><span className="eyebrow">WELCOME TO UIUC GYM BUDDY</span><h2>{mode === 'login' ? 'Welcome back.' : mode === 'reset-request' ? 'Reset your password.' : mode === 'reset-complete' ? 'Choose a new password.' : mode === 'check-email' || mode === 'reset-sent' ? 'Check your email.' : 'Find your people.'}</h2><p className="auth-lede">Meet people who are ready to work out when you are.</p>
+      {authOptions.loading ? <p className="auth-status" role="status">Checking email sign-in…</p>
+        : !authOptions.emailAuthEnabled && <div className="auth-pending" role="status"><Icon name="lock" size={23} /><h3>Email sign-in setup pending</h3><p>{authOptions.error || 'Account creation and sign-in have not been connected on this server yet.'}</p></div>}
+      {mode === 'register' && <p className="auth-email-note">Use any email address you can verify. We’ll send a link to confirm it before you sign in.</p>}
+      {(mode === 'register' || mode === 'login') && <div className="auth-tabs" role="group" aria-label="Account action"><button type="button" aria-pressed={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Create account</button><button type="button" aria-pressed={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button></div>}
+      {linkAction?.type === 'verify' && <p className="auth-status" role="status">Verifying your email…</p>}
+      {message && <p className="inline-success" role="status"><Icon name="check" size={16} />{message}</p>}
+      {error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}
+      {(mode === 'check-email' || mode === 'reset-sent') ? <div className="auth-followup"><p>{mode === 'check-email' ? 'Open the link in your inbox to finish creating your account.' : 'If your verified account exists, a password-reset link is on its way.'}</p>{mode === 'check-email' && <button type="button" className="link-button" disabled={busy || !authOptions.emailAuthEnabled} onClick={() => onAuth('resend', { email })}>Send another verification link</button>}<button type="button" className="link-button" onClick={() => setMode('login')}>Back to sign in</button></div> :
+      <form className="auth-form" onSubmit={submit}>
+        {mode === 'register' && <label>Full name<input type="text" autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" required maxLength={80} /></label>}
+        {mode !== 'reset-complete' && <label>Email address<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required /></label>}
+        {(mode === 'register' || mode === 'login' || mode === 'reset-complete') && <label>{mode === 'reset-complete' ? 'New password' : 'Password'}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'login' ? 'Your password' : 'At least 12 characters'} required minLength={mode === 'login' ? 1 : 12} /></label>}
+        <button className="button button-primary button-full" type="submit" disabled={busy || !authOptions.emailAuthEnabled || linkAction?.type === 'verify'}>{busy ? 'Just a moment…' : mode === 'register' ? 'Create account' : mode === 'reset-request' ? 'Email reset link' : mode === 'reset-complete' ? 'Set new password' : 'Sign in'}<Icon name="arrow" size={18} /></button>
+        {mode === 'login' && <button type="button" className="link-button auth-helper" onClick={() => setMode('reset-request')}>Forgot password?</button>}
+        {mode === 'login' && <button type="button" className="link-button auth-helper" disabled={!email.trim() || busy || !authOptions.emailAuthEnabled} onClick={() => onAuth('resend', { email })}>Resend verification link</button>}
+        {mode === 'reset-request' && <button type="button" className="link-button auth-helper" onClick={() => setMode('login')}>Back to sign in</button>}
+        {mode === 'reset-complete' && <button type="button" className="link-button auth-helper" onClick={() => signedIn ? onCancelLink() : setMode('login')}>{signedIn ? 'Back to app' : 'Back to sign in'}</button>}
+      </form>}
       <p className="auth-footnote"><Icon name="shield" size={17} /> Your schedule is reviewed before any free times are added to your profile.</p>
     </div></div>
   </main>;
@@ -182,11 +218,11 @@ function Sidebar({ view, setView, me, onLogout, mobileOpen, setMobileOpen, pendi
   return <><div className={`sidebar-backdrop ${mobileOpen ? 'show' : ''}`} onClick={() => setMobileOpen(false)} /><aside className={`sidebar ${mobileOpen ? 'sidebar-open' : ''}`}>
     <div className="sidebar-brand"><Brand /><button type="button" className="icon-button sidebar-close" aria-label="Close menu" onClick={() => setMobileOpen(false)}><Icon name="close" /></button></div>
     <div className="sidebar-label">YOUR SPACE</div><nav className="sidebar-nav" aria-label="Main navigation">{NAV.map(item => <button key={item.id} type="button" className={`nav-item ${view === item.id ? 'active' : ''}`} aria-current={view === item.id ? 'page' : undefined} onClick={() => { setView(item.id); setMobileOpen(false); }}><Icon name={item.icon} size={20} /><span>{item.label}</span>{item.id === 'meetups' && pendingCount > 0 && <b className="nav-count">{pendingCount}</b>}</button>)}</nav>
-    <div className="sidebar-bottom"><div className="sidebar-tip"><span><Icon name="spark" size={19} /></span><strong>Make your next workout count.</strong><p>Good company starts with showing up.</p></div><div className="sidebar-user"><Avatar name={me?.name} /><div><strong>{me?.name || 'Student'}</strong><small>UIUC community</small></div><button type="button" className="icon-button" aria-label="Sign out" title="Sign out" onClick={onLogout}><Icon name="logout" size={19} /></button></div></div>
+    <div className="sidebar-bottom"><div className="sidebar-tip"><span><Icon name="spark" size={19} /></span><strong>Make your next workout count.</strong><p>Good company starts with showing up.</p></div><div className="sidebar-user"><Avatar name={me?.name} /><div><strong>{me?.name || 'Member'}</strong><small>Workout community</small></div><button type="button" className="icon-button" aria-label="Sign out" title="Sign out" onClick={onLogout}><Icon name="logout" size={19} /></button></div></div>
   </aside></>;
 }
 
-function MatchCard({ match, index, onRequest, compact = false }) {
+function MatchCard({ match, index, onRequest, onChat, compact = false }) {
   const user = match.user || match;
   const sharedActivities = match.sharedActivities || [];
   const sharedLocations = match.sharedLocations || [];
@@ -196,11 +232,11 @@ function MatchCard({ match, index, onRequest, compact = false }) {
     {!compact && user.bio && <p className="match-bio">{user.bio}</p>}
     <div className="match-chips">{(sharedActivities.length ? sharedActivities : user.activities || []).slice(0, compact ? 2 : 3).map(activity => <span className="chip" key={activity}>{activity}</span>)}</div>
     <div className="match-details"><div><Icon name="clock" size={16} /><span>{overlaps[0] ? formatWindow(overlaps[0]) : 'No shared time yet'}</span></div><div><Icon name="pin" size={16} /><span>{sharedLocations[0] || (user.locations || [])[0] || 'Choose a location'}</span></div></div>
-    <button type="button" className={`button ${compact ? 'button-text' : 'button-outline button-full'}`} onClick={() => onRequest(match)} disabled={!overlaps.length}>{compact ? 'View & invite' : 'Invite to a workout'}<Icon name="arrow" size={17} /></button>
+    <div className="match-actions"><button type="button" className={`button ${compact ? 'button-text' : 'button-outline'}`} onClick={() => onRequest(match)} disabled={!overlaps.length}>{compact ? 'View & invite' : 'Invite to a workout'}<Icon name="arrow" size={17} /></button><button type="button" className="button button-subtle" onClick={() => onChat(user)}><Icon name="chat" size={17} /> Chat</button></div>
   </article>;
 }
 
-function Home({ me, slots, matches, meetups, setView, onRequest }) {
+function Home({ me, slots, matches, meetups, setView, onRequest, onChat }) {
   const first = (me?.name || 'there').split(' ')[0];
   const upcoming = meetups.filter(m => m.status === 'accepted' && (!m.date || m.date >= uiucClock().date)).sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')))[0];
   const pendingIncoming = meetups.filter(m => m.status === 'pending' && String(personId(m.toUser)) === String(me?.id)).length;
@@ -208,12 +244,12 @@ function Home({ me, slots, matches, meetups, setView, onRequest }) {
   return <div className="page-content home-page"><div className="page-greeting"><span className="eyebrow">YOUR WORKOUT CONNECTION</span><h1>Hey, {first}<span className="greeting-period">.</span></h1><p>Good things happen when you show up together.</p></div>
     <section className="home-hero"><div className="hero-content"><span className="hero-pill"><Icon name="spark" size={15} /> YOUR NEXT WORKOUT STARTS HERE</span><h2>Better workouts<br />start with <em>better company.</em></h2><p>Find someone whose schedule and goals line up with yours. Make a plan, then make it happen.</p><button type="button" className="button button-cream" onClick={() => setView('matches')}>Find a buddy <Icon name="arrow" size={18} /></button></div><div className="hero-art" aria-hidden="true"><span className="hero-ring hero-ring-a" /><span className="hero-ring hero-ring-b" /><span className="hero-art-circle"><Icon name="dumbbell" size={86} strokeWidth={1.3} /></span><span className="hero-art-label label-one">YOU GOT THIS</span><span className="hero-art-label label-two">LET'S GO →</span></div></section>
     <div className="stats-grid"><div className="stat-card"><span className="stat-icon orange"><Icon name="users" /></span><div><strong>{matches.length}</strong><span>potential {matches.length === 1 ? 'buddy' : 'buddies'}</span></div></div><div className="stat-card"><span className="stat-icon blue"><Icon name="calendar" /></span><div><strong>{slots.length}</strong><span>open {slots.length === 1 ? 'time' : 'times'} added</span></div></div><div className="stat-card"><span className="stat-icon green"><Icon name="meetup" /></span><div><strong>{pendingIncoming}</strong><span>{pendingIncoming === 1 ? 'invite' : 'invites'} waiting</span></div></div></div>
-    <div className="home-columns"><section><SectionTitle eyebrow="PEOPLE FOR YOUR PACE" title="Students you could meet" action={<button type="button" className="link-button" onClick={() => setView('matches')}>See all <Icon name="arrow" size={16} /></button>} />{matches.length ? <div className="home-matches">{matches.slice(0, 2).map((match, i) => <MatchCard key={match.user?.id || i} match={match} index={i} compact onRequest={onRequest} />)}</div> : <EmptyState icon="users" title="Your people are on the way" description="Add a few available times and profile details so students can find a good match with you." action={<button type="button" className="button button-outline" onClick={() => setView('availability')}>Add availability <Icon name="arrow" size={16} /></button>} />}</section>
-      <section><SectionTitle eyebrow="YOUR NEXT MOVE" title="Coming up" />{upcoming ? <div className="upcoming-card"><span className="upcoming-label">CONFIRMED WORKOUT</span><h3>{upcoming.activity}</h3><p>With {String(personId(upcoming.fromUser)) === String(me?.id) ? personName(upcoming.toUser) : personName(upcoming.fromUser)}</p><div className="upcoming-meta"><span><Icon name="calendar" size={17} />{upcoming.date ? formatDate(upcoming.date) : DAYS[upcoming.day]}</span><span><Icon name="clock" size={17} />{formatTime(upcoming.start)}–{formatTime(upcoming.end)}</span><span><Icon name="pin" size={17} />{upcoming.location}</span></div><button type="button" className="link-button" onClick={() => setView('meetups')}>View meetup <Icon name="arrow" size={16} /></button></div> : <div className="next-step-card"><span className="next-step-icon"><Icon name={nextSlot ? 'clock' : 'calendar'} size={25} /></span><h3>{nextSlot ? 'You have time to move' : 'Make room for a workout'}</h3><p>{nextSlot ? `Your next open window is ${formatDate(nextSlot.date)}, ${formatTime(nextSlot.start)}–${formatTime(nextSlot.end)}. Find someone to join you.` : 'Add the times you are free so we can show you students who are free then too.'}</p><button type="button" className="button button-outline" onClick={() => setView(nextSlot ? 'matches' : 'availability')}>{nextSlot ? 'Find a buddy' : 'Add availability'} <Icon name="arrow" size={16} /></button></div>}</section></div>
+    <div className="home-columns"><section><SectionTitle eyebrow="PEOPLE FOR YOUR PACE" title="People you could meet" action={<button type="button" className="link-button" onClick={() => setView('matches')}>See all <Icon name="arrow" size={16} /></button>} />{matches.length ? <div className="home-matches">{matches.slice(0, 2).map((match, i) => <MatchCard key={match.user?.id || i} match={match} index={i} compact onRequest={onRequest} onChat={onChat} />)}</div> : <EmptyState icon="users" title="Your people are on the way" description="Add a few available times and profile details so others can find a good match with you." action={<button type="button" className="button button-outline" onClick={() => setView('availability')}>Add availability <Icon name="arrow" size={16} /></button>} />}</section>
+      <section><SectionTitle eyebrow="YOUR NEXT MOVE" title="Coming up" />{upcoming ? <div className="upcoming-card"><span className="upcoming-label">CONFIRMED WORKOUT</span><h3>{upcoming.activity}</h3><p>With {String(personId(upcoming.fromUser)) === String(me?.id) ? personName(upcoming.toUser) : personName(upcoming.fromUser)}</p><div className="upcoming-meta"><span><Icon name="calendar" size={17} />{upcoming.date ? formatDate(upcoming.date) : DAYS[upcoming.day]}</span><span><Icon name="clock" size={17} />{formatTime(upcoming.start)}–{formatTime(upcoming.end)}</span><span><Icon name="pin" size={17} />{upcoming.location}</span></div><button type="button" className="link-button" onClick={() => setView('meetups')}>View meetup <Icon name="arrow" size={16} /></button></div> : <div className="next-step-card"><span className="next-step-icon"><Icon name={nextSlot ? 'clock' : 'calendar'} size={25} /></span><h3>{nextSlot ? 'You have time to move' : 'Make room for a workout'}</h3><p>{nextSlot ? `Your next open window is ${formatDate(nextSlot.date)}, ${formatTime(nextSlot.start)}–${formatTime(nextSlot.end)}. Find someone to join you.` : 'Add the times you are free so we can show you people who are free then too.'}</p><button type="button" className="button button-outline" onClick={() => setView(nextSlot ? 'matches' : 'availability')}>{nextSlot ? 'Find a buddy' : 'Add availability'} <Icon name="arrow" size={16} /></button></div>}</section></div>
   </div>;
 }
 
-function Matches({ matches, slots, onRequest, setView, loading, onRefresh }) {
+function Matches({ matches, slots, onRequest, onChat, setView, loading, onRefresh }) {
   const [query, setQuery] = useState('');
   const [activity, setActivity] = useState('all');
   const filtered = matches.filter(match => {
@@ -221,10 +257,10 @@ function Matches({ matches, slots, onRequest, setView, loading, onRefresh }) {
     const text = `${user.name || ''} ${(user.activities || []).join(' ')} ${(match.sharedActivities || []).join(' ')}`.toLowerCase();
     return text.includes(query.toLowerCase()) && (activity === 'all' || (user.activities || []).includes(activity));
   });
-  return <div className="page-content"><SectionTitle eyebrow="FIND YOUR PEOPLE" title="Workout buddies" description="Students who share your interests and have time to work out when you do." action={<button type="button" className="button button-subtle" onClick={onRefresh} disabled={loading}><Icon name="refresh" size={17} /> Refresh</button>} />
+  return <div className="page-content"><SectionTitle eyebrow="FIND YOUR PEOPLE" title="Workout buddies" description="People who share your interests and have time to work out when you do." action={<button type="button" className="button button-subtle" onClick={onRefresh} disabled={loading}><Icon name="refresh" size={17} /> Refresh</button>} />
     {!slots.length && <div className="callout"><Icon name="info" size={20} /><div><strong>Add your free times to improve your matches.</strong><p>Matching works best when we know when you could meet.</p></div><button type="button" className="link-button" onClick={() => setView('availability')}>Add times <Icon name="arrow" size={16} /></button></div>}
     <div className="filter-bar"><label className="search-field"><span className="sr-only">Search buddies</span><Icon name="users" size={18} /><input type="search" value={query} onChange={e => setQuery(e.target.value)} placeholder="Search people or activities" /></label><label className="select-field"><span className="sr-only">Filter by activity</span><select value={activity} onChange={e => setActivity(e.target.value)}><option value="all">All activities</option>{ACTIVITIES.map(item => <option key={item}>{item}</option>)}</select><Icon name="chevron" size={16} /></label></div>
-    {loading ? <div className="loading-panel">Finding people who fit your schedule…</div> : filtered.length ? <div className="match-grid">{filtered.map((match, i) => <MatchCard key={match.user?.id || i} match={match} index={i} onRequest={onRequest} />)}</div> : <EmptyState icon="users" title={matches.length ? 'No matches for these filters' : 'No buddies found just yet'} description={matches.length ? 'Try a different search or activity.' : 'Add more open times and activities, then check back as more students join.'} action={!matches.length && <button type="button" className="button button-primary" onClick={() => setView('availability')}>Add available times <Icon name="arrow" size={16} /></button>} />}
+    {loading ? <div className="loading-panel">Finding people who fit your schedule…</div> : filtered.length ? <div className="match-grid">{filtered.map((match, i) => <MatchCard key={match.user?.id || i} match={match} index={i} onRequest={onRequest} onChat={onChat} />)}</div> : <EmptyState icon="users" title={matches.length ? 'No matches for these filters' : 'No buddies found just yet'} description={matches.length ? 'Try a different search or activity.' : 'Add more open times and activities, then check back as more people join.'} action={!matches.length && <button type="button" className="button button-primary" onClick={() => setView('availability')}>Add available times <Icon name="arrow" size={16} /></button>} />}
   </div>;
 }
 
@@ -245,9 +281,9 @@ function Availability({ slots, onSave, setView }) {
     if (start >= end) { setError('End time must be later than start time.'); return; }
     save([...slots, { day: Number(day), start, end }]);
   }
-  return <div className="page-content"><SectionTitle eyebrow="MAKE TIME TO MOVE" title="My availability" description="Add windows when you could go to the gym. Other students only see shared free times, not your full schedule." action={<button type="button" className="button button-subtle" onClick={() => setView('import')}><Icon name="upload" size={17} /> Import schedule</button>} />
+  return <div className="page-content"><SectionTitle eyebrow="MAKE TIME TO MOVE" title="My availability" description="Add windows when you could go to the gym. Other members only see shared free times, not your full schedule." action={<button type="button" className="button button-subtle" onClick={() => setView('import')}><Icon name="upload" size={17} /> Import schedule</button>} />
     <div className="availability-layout"><section className="panel add-time-panel"><div className="panel-heading"><span className="panel-icon"><Icon name="plus" size={21} /></span><div><h3>Add an open time</h3><p>Pick a day and time you are usually free.</p></div></div><form className="add-time-form" onSubmit={add}><label>Day of the week<select value={day} onChange={e => setDay(Number(e.target.value))}>{DAYS.map((d, i) => <option value={i} key={d}>{d}</option>)}</select></label><div className="form-pair"><label>From<input type="time" value={start} onChange={e => setStart(e.target.value)} required /></label><label>Until<input type="time" value={end} onChange={e => setEnd(e.target.value)} required /></label></div>{error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}<button type="submit" className="button button-primary button-full" disabled={saving}>{saving ? 'Saving…' : 'Add open time'}<Icon name="plus" size={18} /></button></form><div className="privacy-note"><Icon name="lock" size={18} /><p>You control the times in your profile. Imported commitments are never shown to matches.</p></div></section>
-      <section className="panel weekly-panel"><div className="panel-heading weekly-heading"><span className="panel-icon cool"><Icon name="calendar" size={21} /></span><div><h3>Your weekly open times</h3><p>{slots.length} {slots.length === 1 ? 'window' : 'windows'} available to match</p></div></div>{slots.length ? <div className="weekly-list">{DAYS.map((d, i) => { const daySlots = slots.filter(s => Number(s.day) === i); return <div key={d} className={`weekly-row ${!daySlots.length ? 'weekly-row-empty' : ''}`}><span className="weekly-day">{SHORT_DAYS[i]}</span><div className="weekly-slots">{daySlots.length ? daySlots.map((slot, j) => <div className="time-pill" key={`${slot.start}-${j}`}><span>{formatTime(slot.start)} – {formatTime(slot.end)}</span><button type="button" aria-label={`Remove ${d} ${formatTime(slot.start)} to ${formatTime(slot.end)}`} title="Remove time" onClick={() => save(slots.filter(s => s !== slot))} disabled={saving}><Icon name="close" size={14} /></button></div>) : <span className="weekly-no-time">No time added</span>}</div></div>; })}</div> : <EmptyState icon="calendar" title="Your week is a blank canvas" description="Add your first free time to start connecting with students who can work out then too." />}</section></div>
+      <section className="panel weekly-panel"><div className="panel-heading weekly-heading"><span className="panel-icon cool"><Icon name="calendar" size={21} /></span><div><h3>Your weekly open times</h3><p>{slots.length} {slots.length === 1 ? 'window' : 'windows'} available to match</p></div></div>{slots.length ? <div className="weekly-list">{DAYS.map((d, i) => { const daySlots = slots.filter(s => Number(s.day) === i); return <div key={d} className={`weekly-row ${!daySlots.length ? 'weekly-row-empty' : ''}`}><span className="weekly-day">{SHORT_DAYS[i]}</span><div className="weekly-slots">{daySlots.length ? daySlots.map((slot, j) => <div className="time-pill" key={`${slot.start}-${j}`}><span>{formatTime(slot.start)} – {formatTime(slot.end)}</span><button type="button" aria-label={`Remove ${d} ${formatTime(slot.start)} to ${formatTime(slot.end)}`} title="Remove time" onClick={() => save(slots.filter(s => s !== slot))} disabled={saving}><Icon name="close" size={14} /></button></div>) : <span className="weekly-no-time">No time added</span>}</div></div>; })}</div> : <EmptyState icon="calendar" title="Your week is a blank canvas" description="Add your first free time to start connecting with people who can work out then too." />}</section></div>
   </div>;
 }
 
@@ -297,7 +333,7 @@ function Meetups({ meetups, me, onStatus, saving }) {
   return <div className="page-content"><SectionTitle eyebrow="PLANS THAT HAPPEN" title="My meetups" description="Keep track of invites and confirmed workouts in one place." /><div className="segmented" aria-label="Filter meetups">{[['upcoming', 'Upcoming'], ['pending', 'Invites'], ['accepted', 'Confirmed'], ['all', 'All']].map(([value, label]) => <button type="button" className={filter === value ? 'active' : ''} aria-pressed={filter === value} onClick={() => setFilter(value)} key={value}>{label}</button>)}</div>{sorted.length ? <div className="meetup-list">{sorted.map(meetup => { const incoming = String(personId(meetup.toUser)) === String(me?.id); const buddy = incoming ? meetup.fromUser : meetup.toUser; return <article className="meetup-card" key={meetup.id}><div className="meetup-datebox"><strong>{meetup.date ? new Date(`${meetup.date}T12:00:00`).toLocaleDateString(undefined, { month: 'short' }).toUpperCase() : SHORT_DAYS[meetup.day]}</strong><span>{meetup.date ? new Date(`${meetup.date}T12:00:00`).getDate() : '·'}</span></div><div className="meetup-main"><div className="meetup-heading"><h3>{meetup.activity}</h3><span className={`status status-${meetup.status}`}>{meetup.status === 'accepted' ? 'Confirmed' : meetup.status === 'pending' ? (incoming ? 'Needs your reply' : 'Awaiting reply') : meetup.status}</span></div><p>With {personName(buddy)}</p><div className="meetup-info"><span><Icon name="calendar" size={16} />{meetup.date ? formatDate(meetup.date) : DAYS[meetup.day]}</span><span><Icon name="clock" size={16} />{formatTime(meetup.start)} – {formatTime(meetup.end)}</span><span><Icon name="pin" size={16} />{meetup.location}</span></div>{meetup.note && <p className="meetup-note">“{meetup.note}”</p>}</div><div className="meetup-actions">{meetup.status === 'pending' && incoming && <><button className="button button-primary" type="button" disabled={saving} onClick={() => onStatus(meetup.id, 'accepted')}>Accept</button><button className="button button-outline" type="button" disabled={saving} onClick={() => onStatus(meetup.id, 'declined')}>Decline</button></>}{(meetup.status === 'accepted' || (meetup.status === 'pending' && !incoming)) && <button className="button button-subtle" type="button" disabled={saving} onClick={() => onStatus(meetup.id, 'cancelled')}>Cancel plan</button>}</div></article>; })}</div> : <EmptyState icon="meetup" title={filter === 'all' ? 'No meetups yet' : 'Nothing here yet'} description={filter === 'upcoming' ? 'Find a buddy and send an invite to make your first plan.' : 'Your meetup plans will appear here.'} />}</div>;
 }
 
-function Profile({ me, onSave }) {
+function Profile({ me, onSave, setView, hasAvailability }) {
   const [form, setForm] = useState(() => ({ name: me.name || '', gender: me.gender || 'prefer-not-to-say', partnerPreference: me.partnerPreference || 'any', activities: me.activities || [], experience: me.experience || 'beginner', locations: me.locations || [], bio: me.bio || '' }));
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
@@ -306,7 +342,7 @@ function Profile({ me, onSave }) {
   function update(key, value) { setForm(prev => ({ ...prev, [key]: value })); setSuccess(false); }
   function toggle(key, value) { update(key, form[key].includes(value) ? form[key].filter(x => x !== value) : [...form[key], value]); }
   async function submit(event) { event.preventDefault(); setError(''); setBusy(true); try { await onSave(form); setSuccess(true); } catch (e) { setError(e.message); } finally { setBusy(false); } }
-  return <div className="page-content"><SectionTitle eyebrow="MAKE IT YOURS" title="My profile" description="Show potential buddies what you enjoy and who you feel comfortable working out with." /><form className="profile-layout" onSubmit={submit}><section className="panel profile-main"><div className="profile-intro"><Avatar name={form.name} size="large" /><div><h3>{form.name || 'Your profile'}</h3><p>{me.email}</p></div></div><div className="profile-fields"><label>Full name<input type="text" value={form.name} onChange={e => update('name', e.target.value)} required maxLength={80} /></label><div className="form-pair"><label>Gender<select value={form.gender} onChange={e => update('gender', e.target.value)}><option value="prefer-not-to-say">Prefer not to say</option><option value="female">Woman</option><option value="male">Man</option><option value="nonbinary">Nonbinary</option></select></label><label>Partner preference<select value={form.partnerPreference} onChange={e => update('partnerPreference', e.target.value)}><option value="any">Any gender</option><option value="female">Women</option><option value="male">Men</option><option value="nonbinary">Nonbinary people</option></select></label></div><p className="field-help">Your partner preference helps decide which matches you see.</p><label>Experience level<select value={form.experience} onChange={e => update('experience', e.target.value)}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></label><label>About you<textarea rows="4" maxLength={300} value={form.bio} onChange={e => update('bio', e.target.value)} placeholder="What kind of workout buddy are you looking for?" /></label><span className="char-count">{form.bio.length}/300</span></div></section><section className="profile-side"><div className="panel selection-panel"><h3>Activities</h3><p>Pick what you’re open to doing.</p><div className="option-grid">{ACTIVITIES.map(item => <label className={`option-chip ${form.activities.includes(item) ? 'selected' : ''}`} key={item}><input type="checkbox" checked={form.activities.includes(item)} onChange={() => toggle('activities', item)} /><span>{item}</span><Icon name="check" size={15} /></label>)}</div></div><div className="panel selection-panel"><h3>Meeting places</h3><p>Choose locations that work for you.</p><div className="option-grid">{LOCATIONS.map(item => <label className={`option-chip ${form.locations.includes(item) ? 'selected' : ''}`} key={item}><input type="checkbox" checked={form.locations.includes(item)} onChange={() => toggle('locations', item)} /><span>{item}</span><Icon name="check" size={15} /></label>)}</div></div><div className="profile-save">{error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}{success && <p className="inline-success" role="status"><Icon name="check" size={16} />Profile saved.</p>}<button type="submit" className="button button-primary button-full" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}<Icon name="arrow" size={17} /></button></div></section></form></div>;
+  return <div className="page-content"><SectionTitle eyebrow="MAKE IT YOURS" title="My profile" description="Show potential buddies what you enjoy and who you feel comfortable working out with." /><form className="profile-layout" onSubmit={submit}><section className="panel profile-main"><div className="profile-intro"><Avatar name={form.name} size="large" /><div><h3>{form.name || 'Your profile'}</h3><p>{me.email}</p></div></div><div className="profile-fields"><label>Full name<input type="text" value={form.name} onChange={e => update('name', e.target.value)} required maxLength={80} /></label><div className="form-pair"><label>Gender<select value={form.gender} onChange={e => update('gender', e.target.value)}><option value="prefer-not-to-say">Prefer not to say</option><option value="female">Woman</option><option value="male">Man</option><option value="nonbinary">Nonbinary</option></select></label><label>Partner preference<select value={form.partnerPreference} onChange={e => update('partnerPreference', e.target.value)}><option value="any">Any gender</option><option value="female">Women</option><option value="male">Men</option><option value="nonbinary">Nonbinary people</option></select></label></div><p className="field-help">Your partner preference helps decide which matches you see.</p><label>Experience level<select value={form.experience} onChange={e => update('experience', e.target.value)}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></label><label>About you<textarea rows="4" maxLength={300} value={form.bio} onChange={e => update('bio', e.target.value)} placeholder="What kind of workout buddy are you looking for?" /></label><span className="char-count">{form.bio.length}/300</span></div></section><section className="profile-side"><div className="panel selection-panel"><h3>Activities</h3><p>Pick what you’re open to doing.</p><div className="option-grid">{ACTIVITIES.map(item => <label className={`option-chip ${form.activities.includes(item) ? 'selected' : ''}`} key={item}><input type="checkbox" checked={form.activities.includes(item)} onChange={() => toggle('activities', item)} /><span>{item}</span><Icon name="check" size={15} /></label>)}</div></div><div className="panel selection-panel"><h3>Meeting places</h3><p>Choose locations that work for you.</p><div className="option-grid">{LOCATIONS.map(item => <label className={`option-chip ${form.locations.includes(item) ? 'selected' : ''}`} key={item}><input type="checkbox" checked={form.locations.includes(item)} onChange={() => toggle('locations', item)} /><span>{item}</span><Icon name="check" size={15} /></label>)}</div></div><div className="profile-save">{error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}{success && <p className="inline-success" role="status"><Icon name="check" size={16} />Profile saved.</p>}<button type="submit" className="button button-primary button-full" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}<Icon name="arrow" size={17} /></button>{success && !hasAvailability && <button type="button" className="button button-outline button-full" onClick={() => setView('availability')}>Next: add free time <Icon name="calendar" size={17} /></button>}</div></section></form></div>;
 }
 
 function RequestModal({ match, onClose, onSubmit, busy }) {
@@ -370,6 +406,13 @@ export default function App() {
   const [checking, setChecking] = useState(true);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [authMessage, setAuthMessage] = useState('');
+  const [linkAction, setLinkAction] = useState(() => {
+    const match = /^#(verify|reset)=([A-Za-z0-9_-]{43})$/.exec(window.location.hash);
+    return match ? { type: match[1], token: match[2] } : null;
+  });
+  const processedVerifyLink = useRef(null);
+  const [authOptions, setAuthOptions] = useState({ loading: true, emailAuthEnabled: false, error: '' });
   const [me, setMe] = useState(null);
   const [view, setView] = useState('home');
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -378,6 +421,7 @@ export default function App() {
   const [meetups, setMeetups] = useState([]);
   const [loadingMatches, setLoadingMatches] = useState(false);
   const [selectedMatch, setSelectedMatch] = useState(null);
+  const [activeChatId, setActiveChatId] = useState(null);
   const [meetupBusy, setMeetupBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   async function refreshData() {
@@ -391,6 +435,31 @@ export default function App() {
     if (failed) setNotice({ type: 'error', text: failed.reason.message || 'Some information could not load.' });
   }
   useEffect(() => { let active = true; (async () => { try { const data = await api('/api/me'); if (active) { setMe(data?.user || data?.me || data); await refreshData(); } } catch (e) { if (active && !/401|unauthorized|not authenticated|sign in to continue/i.test(e.message)) setAuthError(e.message); } finally { if (active) setChecking(false); } })(); return () => { active = false; }; }, []);
+  useEffect(() => { let active = true; api('/api/auth/config').then(data => { if (active) setAuthOptions({ loading: false, emailAuthEnabled: Boolean(data?.emailAuthEnabled), error: '' }); }).catch(() => { if (active) setAuthOptions({ loading: false, emailAuthEnabled: false, error: 'Could not check email sign-in. Check your connection and try reloading.' }); }); return () => { active = false; }; }, []);
+  useEffect(() => {
+    const onHashChange = () => {
+      const match = /^#(verify|reset)=([A-Za-z0-9_-]{43})$/.exec(window.location.hash);
+      if (match) setLinkAction({ type: match[1], token: match[2] });
+    };
+    window.addEventListener('hashchange', onHashChange);
+    return () => window.removeEventListener('hashchange', onHashChange);
+  }, []);
+  useEffect(() => {
+    if (!linkAction) return;
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}`);
+    if (linkAction.type !== 'verify' || checking || processedVerifyLink.current === linkAction.token) return;
+    processedVerifyLink.current = linkAction.token;
+    (async () => {
+      setAuthBusy(true); setAuthError('');
+      try {
+        const data = await api('/api/auth/email/verify', { method: 'POST', body: JSON.stringify({ token: linkAction.token }) });
+        setMe(data.user);
+        await refreshData();
+        setView('profile');
+      } catch (error) { setAuthError(error.message); }
+      finally { processedVerifyLink.current = null; setAuthBusy(false); setLinkAction(null); }
+    })();
+  }, [checking, linkAction]);
   useEffect(() => {
     if (!me?.id) return undefined;
     let active = true;
@@ -407,15 +476,50 @@ export default function App() {
     return () => { active = false; window.clearInterval(interval); window.removeEventListener('focus', syncInvites); document.removeEventListener('visibilitychange', syncInvites); };
   }, [me?.id]);
   useEffect(() => { window.scrollTo({ top: 0, behavior: 'instant' }); }, [view]);
-  async function auth(mode, values) { setAuthBusy(true); setAuthError(''); try { await api(`/api/auth/${mode === 'register' ? 'register' : 'login'}`, { method: 'POST', body: JSON.stringify(mode === 'register' ? values : { email: values.email, password: values.password }) }); const data = await api('/api/me'); setMe(data?.user || data?.me || data); await refreshData(); setView(mode === 'register' ? 'profile' : 'home'); } catch (e) { setAuthError(e.message); } finally { setAuthBusy(false); } }
-  async function logout() { try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* Clear the local session even if the network fails. */ } setMe(null); setSlots([]); setMatches([]); setMeetups([]); setView('home'); setMobileOpen(false); }
+  async function auth(mode, values) {
+    setAuthBusy(true); setAuthError(''); setAuthMessage('');
+    try {
+      if (mode === 'resend' || mode === 'reset-request') {
+        await api(mode === 'resend' ? '/api/auth/email/resend' : '/api/auth/email/reset/request', {
+          method: 'POST', body: JSON.stringify({ email: values.email }),
+        });
+        if (mode === 'resend') setAuthMessage('If that address has a pending account, a new link is on its way.');
+        return mode === 'reset-request' ? { resetRequested: true } : { ok: true };
+      }
+      if (mode === 'reset-complete') {
+        await api('/api/auth/email/reset/complete', { method: 'POST',
+          body: JSON.stringify({ token: values.token, password: values.password }) });
+        setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null);
+        setView('home'); setMobileOpen(false); setLinkAction(null);
+        setAuthMessage('Password changed. Sign in with your new password.');
+        return { resetCompleted: true };
+      }
+      const payload = mode === 'register' ? { name: values.name, email: values.email, password: values.password }
+        : { email: values.email, password: values.password };
+      const result = await api(`/api/auth/email/${mode}`, { method: 'POST', body: JSON.stringify(payload) });
+      if (result?.verificationRequired) {
+        setAuthMessage(result.message || 'Check your email for a verification link.');
+        return result;
+      }
+      const data = await api('/api/me');
+      setMe(data?.user || data?.me || data);
+      await refreshData();
+      setView(mode === 'register' ? 'profile' : 'home');
+      return result;
+    } catch (error) { setAuthError(error.message); return null; }
+    finally { setAuthBusy(false); }
+  }
+  async function logout() { try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* Clear the local session even if the network fails. */ } setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null); setView('home'); setMobileOpen(false); }
   async function saveProfile(values) { const data = await api('/api/me', { method: 'PATCH', body: JSON.stringify(values) }); setMe(data?.user || data?.me || data); const buddyData = await api('/api/matches'); setMatches(buddyData.matches || []); setNotice({ type: 'success', text: 'Your profile is updated.' }); }
   async function saveSlots(next) { const data = await api('/api/availability', { method: 'PUT', body: JSON.stringify({ slots: next }) }); setSlots(data?.slots || next); const buddyData = await api('/api/matches'); setMatches(buddyData.matches || []); setNotice({ type: 'success', text: 'Your available times are saved.' }); }
   async function addImported(next) { await saveSlots(next); setView('availability'); }
   async function sendInvite(values) { setMeetupBusy(true); try { await api('/api/meetups', { method: 'POST', body: JSON.stringify(values) }); const data = await api('/api/meetups'); setMeetups(data.meetups || []); setSelectedMatch(null); setNotice({ type: 'success', text: 'Workout invite sent. You’ll see the reply in Meetups.' }); setView('meetups'); } finally { setMeetupBusy(false); } }
   async function updateMeetup(id, status) { setMeetupBusy(true); try { await api(`/api/meetups/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }) }); const data = await api('/api/meetups'); setMeetups(data.meetups || []); setNotice({ type: 'success', text: status === 'accepted' ? 'Workout confirmed!' : status === 'declined' ? 'Invite declined.' : 'Plan cancelled.' }); } catch (e) { setNotice({ type: 'error', text: e.message }); } finally { setMeetupBusy(false); } }
+  async function startChat(user) { try { const data = await api('/api/chats', { method: 'POST', body: JSON.stringify({ toUserId: user.id }) }); setActiveChatId(data.chat.id); setView('chats'); } catch (e) { setNotice({ type: 'error', text: e.message }); } }
   const pendingCount = meetups.filter(m => m.status === 'pending' && String(personId(m.toUser)) === String(me?.id)).length;
   if (checking) return <div className="startup"><Brand /><div className="spinner" aria-label="Loading" /><p>Getting your space ready…</p></div>;
-  if (!me) return <AuthScreen onAuth={auth} error={authError} busy={authBusy} />;
-  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><Sidebar view={view} setView={setView} me={me} onLogout={logout} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} pendingCount={pendingCount} /><main className="app-main" id="main-content" tabIndex={-1}><header className="topbar"><button type="button" className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button><div className="topbar-context"><span className="topbar-dot" /> UIUC STUDENT COMMUNITY</div><div className="topbar-right"><span className="topbar-message">Make today a good day to move.</span><Avatar name={me.name} size="small" /></div></header>{notice && <div className="notice-wrap"><Notice type={notice.type} onClose={() => setNotice(null)}>{notice.text}</Notice></div>}{view === 'home' && <Home me={me} slots={slots} matches={matches} meetups={meetups} setView={setView} onRequest={setSelectedMatch} />}{view === 'matches' && <Matches matches={matches} slots={slots} onRequest={setSelectedMatch} setView={setView} loading={loadingMatches} onRefresh={refreshData} />}{view === 'availability' && <Availability slots={slots} onSave={saveSlots} setView={setView} />}{view === 'import' && <ImportSchedule slots={slots} onAdd={addImported} />}{view === 'meetups' && <Meetups meetups={meetups} me={me} onStatus={updateMeetup} saving={meetupBusy} />}{view === 'profile' && <Profile me={me} onSave={saveProfile} />}</main>{selectedMatch && <RequestModal key={selectedMatch.user?.id || selectedMatch.id} match={selectedMatch} onClose={() => setSelectedMatch(null)} onSubmit={sendInvite} busy={meetupBusy} />}</div>;
+  if (!me || linkAction?.type === 'reset') return <AuthScreen onAuth={auth} error={authError}
+    message={authMessage} busy={authBusy} authOptions={authOptions} linkAction={linkAction}
+    signedIn={Boolean(me)} onCancelLink={() => setLinkAction(null)} />;
+  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><Sidebar view={view} setView={setView} me={me} onLogout={logout} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} pendingCount={pendingCount} /><main className="app-main" id="main-content" tabIndex={-1}><header className="topbar"><button type="button" className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button><div className="topbar-context"><span className="topbar-dot" /> WORKOUT COMMUNITY</div><div className="topbar-right"><span className="topbar-message">Make today a good day to move.</span><Avatar name={me.name} size="small" /></div></header>{notice && <div className="notice-wrap"><Notice type={notice.type} onClose={() => setNotice(null)}>{notice.text}</Notice></div>}{view === 'home' && <Home me={me} slots={slots} matches={matches} meetups={meetups} setView={setView} onRequest={setSelectedMatch} onChat={startChat} />}{view === 'matches' && <Matches matches={matches} slots={slots} onRequest={setSelectedMatch} onChat={startChat} setView={setView} loading={loadingMatches} onRefresh={refreshData} />}{view === 'now' && <PresencePage me={me} api={api} onChat={startChat} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'chats' && <ChatsPage me={me} api={api} activeChatId={activeChatId} setActiveChatId={setActiveChatId} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'availability' && <Availability slots={slots} onSave={saveSlots} setView={setView} />}{view === 'import' && <ImportSchedule slots={slots} onAdd={addImported} />}{view === 'meetups' && <Meetups meetups={meetups} me={me} onStatus={updateMeetup} saving={meetupBusy} />}{view === 'profile' && <Profile me={me} onSave={saveProfile} setView={setView} hasAvailability={slots.length > 0} />}</main>{selectedMatch && <RequestModal key={selectedMatch.user?.id || selectedMatch.id} match={selectedMatch} onClose={() => setSelectedMatch(null)} onSubmit={sendInvite} busy={meetupBusy} />}</div>;
 }

@@ -7,7 +7,7 @@ const OPEN_MINUTE = 6 * 60;
 const CLOSE_MINUTE = 22 * 60;
 const MIN_SLOT_MINUTES = 60;
 const MAX_CALENDAR_BYTES = 5 * 1024 * 1024;
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+const MAX_IMAGE_BYTES = 4 * 1024 * 1024;
 const MAX_OCCURRENCES = 20_000;
 const IMAGE_WARNINGS = {
   unclear_time: 'At least one time in the screenshot was unclear and needs manual review.',
@@ -266,7 +266,7 @@ function imageMimeType(file) {
 }
 
 async function screenshotPreview(file, days, { fetchImpl, apiKey }) {
-  if (file.buffer.length > MAX_IMAGE_BYTES) throw new Error('Screenshots must be under 10 MB.');
+  if (file.buffer.length > MAX_IMAGE_BYTES) throw new Error('Screenshots must be under 4 MB.');
   const mime = imageMimeType(file);
   if (!apiKey) {
     throw new Error('Screenshot interpretation is not configured yet. Add OPENAI_API_KEY to the server, or import an .ics file or enter times manually.');

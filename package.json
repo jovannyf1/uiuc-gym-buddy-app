@@ -3,17 +3,23 @@
   "private": true,
   "version": "1.0.0",
   "type": "module",
+  "engines": {
+    "node": "24.x"
+  },
   "scripts": {
     "dev": "concurrently -k -n api,web -c blue,green \"node --watch server/index.js\" \"npm --prefix client run dev\"",
     "start": "node server/index.js",
-    "build": "npm --prefix client run build",
+    "build": "npm --prefix client run build && node scripts/copy-public.js",
     "test": "node --test server/*.test.js"
   },
   "dependencies": {
     "dotenv": "^16.6.1",
     "express": "^4.21.2",
     "ical.js": "^2.2.1",
-    "multer": "^2.0.2"
+    "multer": "^2.0.2",
+    "nodemailer": "^10.1.7",
+    "openid-client": "^6.8.8",
+    "pg": "^8.23.1"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"

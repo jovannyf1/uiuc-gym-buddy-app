@@ -2,5 +2,7 @@ node_modules/
 client/node_modules/
 client/dist/
 data/
+public/
 .env
+.vercel/
 .DS_Store

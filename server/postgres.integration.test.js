@@ -65,8 +65,9 @@ test('PostgreSQL email account journey, matching, chat, limits, and persistence'
   const runId = randomBytes(5).toString('hex');
   const originalPassword = 'postgres-test-password';
   const emailStudent = async (name, email) => {
+    const username = `${name.split(' ')[0].toLowerCase()}_${runId}`;
     const registered = await request('/api/auth/email/register', {
-      method: 'POST', body: { name, email, password: originalPassword },
+      method: 'POST', body: { name, username, email, password: originalPassword },
     });
     assert.equal(registered.status, 201);
     assert.ok(registered.cookie, 'sign-up immediately creates a session');

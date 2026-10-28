@@ -62,6 +62,11 @@ struct BuddiesView: View {
                                 Spacer()
                                 SafetyMenu(user: person.user)
                             }
+                            if let username = person.user.username {
+                                Text("@\(username)")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
+                            }
                             Text("\(person.activity) · \(person.location)")
                                 .font(.subheadline)
                                 .foregroundStyle(.secondary)
@@ -82,6 +87,11 @@ struct BuddiesView: View {
                                 Text(match.user.name).font(.headline)
                                 Spacer()
                                 SafetyMenu(user: match.user)
+                            }
+                            if let username = match.user.username {
+                                Text("@\(username)")
+                                    .font(.footnote)
+                                    .foregroundStyle(.secondary)
                             }
                             if !match.user.bio.isEmpty { Text(match.user.bio).font(.subheadline) }
                             Text("\(match.sharedActivities.joined(separator: ", ")) · \(match.sharedLocations.joined(separator: ", "))")

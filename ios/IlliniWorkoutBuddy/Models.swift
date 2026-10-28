@@ -55,6 +55,7 @@ enum GymData {
 struct UserProfile: Codable, Identifiable, Hashable {
     let id: Int
     var name: String
+    var username: String?
     var gender: String
     var activities: [String]
     var experience: String
@@ -143,6 +144,7 @@ struct ChatSummary: Codable, Identifiable {
 
 struct RegisterPayload: Encodable {
     let name: String
+    let username: String
     let email: String
     let password: String
 }
@@ -156,6 +158,7 @@ struct EmailResendPayload: Encodable { let email: String }
 
 struct ProfilePayload: Encodable {
     let name: String
+    let username: String
     let gender: String
     let partnerPreference: String
     let experience: String

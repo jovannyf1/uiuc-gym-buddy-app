@@ -10,6 +10,7 @@ import { createDatabase } from './database.js';
 import { previewImport } from './import.js';
 import { registerSocialRoutes } from './social.js';
 import { emailAuthSettings, initializeEmailAuth, hasEmailIdentity, registerEmailRoutes } from './email-auth.js';
+import { normalizeUsername, usernameConflict } from './username.js';
 import {
   ACTIVITIES, LOCATIONS, GENDERS, PARTNER_PREFERENCES, EXPERIENCE_LEVELS,
   InputError, timeToMinutes, normalizeSlots, matchDetails, weekdayForDate, chicagoNow,
@@ -26,6 +27,7 @@ if (db.kind === 'sqlite') db.exec(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    username TEXT,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
@@ -68,6 +70,12 @@ if (db.kind === 'sqlite') db.exec(`
   CREATE INDEX IF NOT EXISTS meetups_from ON meetups(from_user_id);
   CREATE INDEX IF NOT EXISTS meetups_to ON meetups(to_user_id);
 `);
+if (db.kind === 'sqlite') {
+  const hasUsername = db.prepare('PRAGMA table_info(users)').all().some(column => column.name === 'username');
+  if (!hasUsername) db.exec('ALTER TABLE users ADD COLUMN username TEXT');
+  db.exec(`UPDATE users SET username = 'member' || id WHERE username IS NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS users_username_lower ON users(lower(username));`);
+}
 
 const SESSION_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -133,6 +141,7 @@ function profile(row, own = false) {
   const result = {
     id: row.id,
     name: row.name,
+    username: row.username,
     gender: row.gender,
     activities: JSON.parse(row.activities),
     experience: row.experience,
@@ -305,12 +314,16 @@ registerEmailRoutes({ app, db, createSession, profile, hashPassword, passwordMat
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: profile(req.user, true) }));
 
 app.patch('/api/me', requireAuth, wrap(async (req, res) => {
-    const keys = ['name', 'gender', 'partnerPreference', 'experience', 'activities', 'locations', 'bio'];
+    const keys = ['name', 'username', 'gender', 'partnerPreference', 'experience', 'activities', 'locations', 'bio'];
     if (!hasOnlyKeys(req.body, keys) || Object.keys(req.body).length === 0) {
       throw new InputError('Choose profile details to update.');
     }
     const current = req.user;
     const name = 'name' in req.body ? textField(req.body.name, 'Name', { min: 2, max: 80 }) : current.name;
+    const username = 'username' in req.body ? normalizeUsername(req.body.username) : current.username;
+    if (username !== current.username && await db.prepare('SELECT 1 FROM users WHERE lower(username) = ? AND id != ?').get(username, current.id)) {
+      throw new InputError('This username is already taken.', 409);
+    }
     const gender = 'gender' in req.body ? enumField(req.body.gender, GENDERS, 'gender') : current.gender;
     const preference = 'partnerPreference' in req.body
       ? enumField(req.body.partnerPreference, PARTNER_PREFERENCES, 'partner preference') : current.partner_preference;
@@ -321,9 +334,14 @@ app.patch('/api/me', requireAuth, wrap(async (req, res) => {
     const locations = 'locations' in req.body
       ? choicesField(req.body.locations, LOCATIONS, 'locations') : JSON.parse(current.locations);
     const bio = 'bio' in req.body ? textField(req.body.bio, 'Bio', { max: 300 }) : current.bio;
-    await db.prepare(`UPDATE users SET name = ?, gender = ?, partner_preference = ?, experience = ?,
+    try {
+      await db.prepare(`UPDATE users SET name = ?, username = ?, gender = ?, partner_preference = ?, experience = ?,
       activities = ?, locations = ?, bio = ? WHERE id = ?`)
-      .run(name, gender, preference, experience, JSON.stringify(activities), JSON.stringify(locations), bio, current.id);
+        .run(name, username, gender, preference, experience, JSON.stringify(activities), JSON.stringify(locations), bio, current.id);
+    } catch (error) {
+      if (usernameConflict(error) || error?.code === '23505') throw new InputError('This username is already taken.', 409);
+      throw error;
+    }
     const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(current.id);
     res.json({ user: profile({ ...updated, email_verified_at: current.email_verified_at }, true) });
 }));

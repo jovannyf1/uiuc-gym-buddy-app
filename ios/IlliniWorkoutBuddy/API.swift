@@ -162,9 +162,10 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func registerEmail(name: String, email: String, password: String) async throws {
+    func registerEmail(name: String, username: String, email: String, password: String) async throws {
         let body = try api.encode(RegisterPayload(
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
+            username: username.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             email: email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             password: password
         ))

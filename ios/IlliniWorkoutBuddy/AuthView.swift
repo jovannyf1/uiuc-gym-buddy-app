@@ -4,6 +4,7 @@ struct AuthView: View {
     @EnvironmentObject private var store: AppStore
     @State private var registeringEmail = false
     @State private var emailName = ""
+    @State private var emailUsername = ""
     @State private var email = ""
     @State private var emailPassword = ""
     @State private var awaitingVerification = false
@@ -12,6 +13,11 @@ struct AuthView: View {
     @State private var busy = false
     @State private var error: String?
     @State private var showingSettings = false
+
+    private var usernameReady: Bool {
+        let value = emailUsername.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return value.range(of: "^[a-z0-9_]{3,24}$", options: .regularExpression) != nil
+    }
 
     var body: some View {
         NavigationStack {
@@ -120,6 +126,15 @@ struct AuthView: View {
                         .textContentType(.name)
                         .textInputAutocapitalization(.words)
                         .textFieldStyle(.roundedBorder)
+                    TextField("Username", text: $emailUsername)
+                        .textContentType(.username)
+                        .textInputAutocapitalization(.never)
+                        .autocorrectionDisabled()
+                        .textFieldStyle(.roundedBorder)
+                        .accessibilityIdentifier("signup-username")
+                    Text("Your unique @username: 3–24 letters, numbers, or underscores. You can change it later in your profile.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
                 }
                 TextField("Email address", text: $email)
                     .textContentType(registeringEmail ? .emailAddress : .username)
@@ -146,7 +161,8 @@ struct AuthView: View {
                           || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                           || emailPassword.isEmpty
                           || (registeringEmail && emailPassword.count < 12)
-                          || (registeringEmail && emailName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty))
+                          || (registeringEmail && emailName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                          || (registeringEmail && !usernameReady))
 
                 if !registeringEmail {
                     VStack(alignment: .leading, spacing: 10) {
@@ -178,7 +194,8 @@ struct AuthView: View {
         Task {
             do {
                 if registeringEmail {
-                    try await store.registerEmail(name: emailName, email: email, password: emailPassword)
+                    try await store.registerEmail(name: emailName, username: emailUsername,
+                                                  email: email, password: emailPassword)
                     emailPassword = ""
                 } else {
                     try await store.loginWithEmail(email: email, password: emailPassword)

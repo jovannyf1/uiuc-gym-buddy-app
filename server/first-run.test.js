@@ -59,7 +59,7 @@ async function request(endpoint, { method = 'GET', cookie, body } = {}) {
 
 async function emailStudent(name, email) {
   const registered = await request('/api/auth/email/register', {
-    method: 'POST', body: { name, email, password: 'first-run-test-password' },
+    method: 'POST', body: { name, username: name.split(' ')[0].toLowerCase(), email, password: 'first-run-test-password' },
   });
   assert.equal(registered.status, 201);
   assert.ok(registered.cookie, 'registration starts a session');

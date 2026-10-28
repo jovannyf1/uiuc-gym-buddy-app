@@ -25,6 +25,7 @@ function publicProfile(row) {
   return {
     id: row.id,
     name: row.name,
+    username: row.username,
     gender: row.gender,
     activities: JSON.parse(row.activities),
     experience: row.experience,

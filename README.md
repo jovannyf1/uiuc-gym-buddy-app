@@ -42,9 +42,11 @@ A separate native SwiftUI iPhone app lives in [`ios/`](ios/). Its screens use th
 
 Email and password sign-in is available on the website and in the native iPhone app when a mail provider is configured with `EMAIL_FROM`, `PUBLIC_APP_URL`, and either SMTP credentials or `RESEND_API_KEY`. A person can sign up with **any email address**, use the app immediately, and verify the address later from a reminder inside the app. Verification matters for account recovery: password-reset email is available only after the address is verified. Password reset signs out old sessions. Password hashes, verification status, and sessions are saved in the app database; on Vercel that database is Supabase Postgres. The app never stores the email service password in the website or iPhone app. Verification proves control of that mailbox, **not** enrollment at UIUC. NetID sign-in is deferred and is not available in this version.
 
+New accounts choose a case-insensitive, unique `@username` separate from their full name. A username and email address are reserved as soon as the account is created, including before email verification. Existing accounts receive a starter `member<ID>` username that can be changed in the profile. Full names can repeat; sign-in still uses email.
+
 ## What works in this version
 
-- Immediate email registration and sign-in, optional verification for account recovery, password reset for verified accounts, saved profiles, and optional partner-gender preferences
+- Immediate email registration and sign-in, unique usernames and emails from account creation, optional verification for account recovery, password reset for verified accounts, saved profiles, and optional partner-gender preferences
 - Manual weekly availability and schedule-import suggestions
 - Matches based on shared free windows and gym locations
 - Dated meetup invitations with accept, decline, and cancel actions

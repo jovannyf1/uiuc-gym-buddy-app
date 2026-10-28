@@ -27,12 +27,14 @@ db.exec(`
   CREATE TABLE users (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    username TEXT,
     email TEXT NOT NULL UNIQUE,
     password_hash TEXT NOT NULL,
     password_salt TEXT NOT NULL,
     created_at TEXT NOT NULL
   );
   CREATE TABLE netid_identities (user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE);
+  CREATE UNIQUE INDEX users_username_lower ON users(lower(username));
 `);
 initializeEmailAuth(db);
 
@@ -87,7 +89,7 @@ async function request(endpoint, body) {
 
 test('SMTP sends an optional verification link over TLS; failed delivery preserves the account', async () => {
   const registered = await request('/api/auth/email/register', {
-    name: 'SMTP Student', email: 'student@example.org', password: 'long-test-password',
+    name: 'SMTP Student', username: 'smtp_student', email: 'student@example.org', password: 'long-test-password',
   });
   assert.equal(registered.status, 201);
   assert.equal(sessionsCreated, 1);
@@ -117,7 +119,7 @@ test('SMTP sends an optional verification link over TLS; failed delivery preserv
 
   deliveryFails = true;
   const second = await request('/api/auth/email/register', {
-    name: 'Failed Student', email: 'failed@example.org', password: 'another-long-password',
+    name: 'Failed Student', username: 'failed_student', email: 'failed@example.org', password: 'another-long-password',
   });
   assert.equal(second.status, 201);
   const failed = await request('/api/auth/email/verify/send', {});

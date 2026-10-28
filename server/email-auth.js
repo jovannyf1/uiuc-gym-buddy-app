@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import nodemailer from 'nodemailer';
 import { InputError } from './core.js';
+import { normalizeUsername, usernameConflict, emailConflict } from './username.js';
 
 const VERIFY_AGE_MS = 30 * 60 * 1000;
 const RESET_AGE_MS = 20 * 60 * 1000;
@@ -178,30 +179,36 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
 
   app.post('/api/auth/email/register', handle(async (req, res) => {
     enabled();
-    if (!onlyKeys(req.body, ['name', 'email', 'password'])) throw new InputError('Enter your name, email, and password.');
+    if (!onlyKeys(req.body, ['name', 'username', 'email', 'password'])) throw new InputError('Enter your name, username, email, and password.');
     await limited(db, 'register-ip', req.ip, 10, 60 * 60 * 1000);
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
     if (name.length < 2 || name.length > 80) throw new InputError('Name must be 2–80 characters.');
+    const username = normalizeUsername(req.body.username);
     const email = normalizeEmail(req.body.email);
     await limited(db, 'register-email', email, 3, 60 * 60 * 1000);
     const password = passwordField(req.body.password);
     if (await db.prepare('SELECT 1 FROM users WHERE email = ?').get(email)) {
       throw new InputError('This email already has an account. Sign in or request a password reset.', 409);
     }
+    if (await db.prepare('SELECT 1 FROM users WHERE lower(username) = ?').get(username)) {
+      throw new InputError('This username is already taken.', 409);
+    }
     const { salt, hash } = await hashPassword(password);
     let userId;
     try {
       await transaction(db, async () => {
-        const created = await db.prepare(`INSERT INTO users (name, email, password_hash, password_salt, created_at)
-          VALUES (?, ?, ?, ?, ?) RETURNING id`).get(name, email, hash, salt, new Date().toISOString());
+        const created = await db.prepare(`INSERT INTO users (name, username, email, password_hash, password_salt, created_at)
+          VALUES (?, ?, ?, ?, ?, ?) RETURNING id`).get(name, username, email, hash, salt, new Date().toISOString());
         if (!created) throw new Error('User insert did not return an id.');
         userId = created.id;
         await db.prepare('INSERT INTO email_identities (user_id, verified_at, created_at) VALUES (?, NULL, ?)')
           .run(userId, Date.now());
       });
     } catch (error) {
+      if (usernameConflict(error)) throw new InputError('This username is already taken.', 409);
+      if (emailConflict(error)) throw new InputError('This email already has an account.', 409);
       if (error?.code === '23505' || String(error.message).includes('UNIQUE')) {
-        throw new InputError('This email already has an account.', 409);
+        throw new InputError('This email or username already has an account.', 409);
       }
       throw error;
     }

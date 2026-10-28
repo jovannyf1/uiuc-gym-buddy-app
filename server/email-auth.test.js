@@ -40,9 +40,9 @@ after(async () => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-async function request(endpoint, body, cookie) {
+async function request(endpoint, body, cookie, method) {
   const response = await originalFetch(`${base}${endpoint}`, {
-    method: body === undefined ? 'GET' : 'POST',
+    method: method || (body === undefined ? 'GET' : 'POST'),
     headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }),
       ...(cookie ? { cookie } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -70,10 +70,31 @@ test('new email account can sign in before verification, excludes pilot identiti
   assert.equal((await request('/api/auth/email/verify/send', {})).status, 401);
 
   const registered = await request('/api/auth/email/register', {
-    name: 'Taylor Example', email: 'taylor@example.org', password: 'long-unique-password',
+    name: 'Taylor Example', username: 'taylor', email: 'taylor@example.org', password: 'long-unique-password',
   });
   assert.equal(registered.status, 201);
   assert.equal(registered.body.user.emailVerified, false);
+  assert.equal(registered.body.user.username, 'taylor');
+  const duplicateEmail = await request('/api/auth/email/register', {
+    name: 'Another Taylor', username: 'another_taylor', email: 'TAYLOR@EXAMPLE.ORG', password: 'long-unique-password',
+  });
+  assert.equal(duplicateEmail.status, 409, 'unverified email is reserved case-insensitively');
+  assert.match(duplicateEmail.body.error, /email already has an account/i);
+  const duplicateUsername = await request('/api/auth/email/register', {
+    name: 'Another Taylor', username: 'TaYlOr', email: 'another@example.org', password: 'long-unique-password',
+  });
+  assert.equal(duplicateUsername.status, 409, 'username is reserved case-insensitively');
+  assert.match(duplicateUsername.body.error, /username is already taken/i);
+  const other = await request('/api/auth/email/register', {
+    name: 'Other Student', username: 'other', email: 'other@example.org', password: 'long-unique-password',
+  });
+  assert.equal(other.status, 201);
+  const conflictingEdit = await request('/api/me', { username: 'TAYLOR' }, other.cookie, 'PATCH');
+  assert.equal(conflictingEdit.status, 409, 'editing a profile cannot claim another handle');
+  const renamed = await request('/api/me', { username: 'TaYlOr_New' }, registered.cookie, 'PATCH');
+  assert.equal(renamed.status, 200);
+  assert.equal(renamed.body.user.username, 'taylor_new');
+  assert.equal(db.prepare('SELECT username FROM users WHERE email = ?').get('taylor@example.org').username, 'taylor_new');
   assert.ok(registered.cookie, 'registration starts a session');
   assert.equal(sent.length, 0, 'registration does not depend on email delivery');
 
@@ -122,7 +143,7 @@ test('new email account can sign in before verification, excludes pilot identiti
   assert.equal((await request('/api/me', undefined, `uiuc_gym_buddy_session=${pilotToken}`)).status, 401);
   assert.deepEqual((await request('/api/matches', undefined, verified.cookie)).body, { matches: [] });
   assert.equal((await request('/api/auth/email/register', {
-    name: 'Old Pilot', email: 'pilot@illinois.edu', password: 'long-unique-password',
+    name: 'Old Pilot', username: 'old_pilot', email: 'pilot@illinois.edu', password: 'long-unique-password',
   })).status, 409);
 
   const unknownReset = await request('/api/auth/email/reset/request', { email: 'unknown@example.org' });
@@ -153,7 +174,7 @@ test('new email account can sign in before verification, excludes pilot identiti
 
 test('verification resend keeps prior unexpired links and returns the same response for unknown addresses', async () => {
   const registered = await request('/api/auth/email/register', {
-    name: 'Sam Example', email: 'sam@example.org', password: 'another-long-password',
+    name: 'Sam Example', username: 'sam', email: 'sam@example.org', password: 'another-long-password',
   });
   assert.equal(registered.status, 201);
   assert.equal((await request('/api/auth/email/verify/send', {}, registered.cookie)).status, 200);
@@ -170,7 +191,7 @@ test('verification resend keeps prior unexpired links and returns the same respo
 
 test('failed optional verification and reset delivery leave earlier emailed links usable', async () => {
   const registered = await request('/api/auth/email/register', {
-    name: 'Morgan Example', email: 'morgan@example.org', password: 'more-long-password',
+    name: 'Morgan Example', username: 'morgan', email: 'morgan@example.org', password: 'more-long-password',
   });
   assert.equal(registered.status, 201);
   assert.equal((await request('/api/auth/email/verify/send', {}, registered.cookie)).status, 200);

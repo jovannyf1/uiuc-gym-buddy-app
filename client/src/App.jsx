@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { ChatsPage, PresencePage } from './Social.jsx';
+import GuidedHelp from './GuidedHelp.jsx';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const SHORT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -162,6 +163,34 @@ function EmptyState({ icon, title, description, action }) {
 }
 function Notice({ type = 'success', children, onClose }) {
   return <div className={`notice notice-${type}`} role="status"><Icon name={type === 'error' ? 'alert' : 'check'} size={18} /><span>{children}</span><button type="button" className="icon-button" aria-label="Dismiss message" onClick={onClose}><Icon name="close" size={16} /></button></div>;
+}
+
+function QuickTourPrompt({ open, onStart, onLater }) {
+  const startRef = useRef(null);
+  const laterRef = useRef(null);
+  useEffect(() => {
+    if (!open) return undefined;
+    startRef.current?.focus();
+    function onKeyDown(event) {
+      if (event.key === 'Escape') { event.preventDefault(); onLater(); }
+      if (event.key === 'Tab' && event.shiftKey && document.activeElement === startRef.current) {
+        event.preventDefault(); laterRef.current?.focus();
+      } else if (event.key === 'Tab' && !event.shiftKey && document.activeElement === laterRef.current) {
+        event.preventDefault(); startRef.current?.focus();
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [open, onLater]);
+  if (!open) return null;
+  return <div className="tour-prompt-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onLater(); }}>
+    <section className="tour-invitation" role="dialog" aria-modal="true" aria-labelledby="tour-invitation-title" aria-describedby="tour-invitation-description">
+      <span className="eyebrow">WELCOME TO UIUC GYM BUDDY</span>
+      <h2 id="tour-invitation-title">Would you like a quick tour?</h2>
+      <p id="tour-invitation-description">See how profiles, free times, matches, chats, and workout invitations fit together.</p>
+      <div className="tour-invitation-actions"><button ref={startRef} type="button" className="button button-primary" onClick={onStart}>Start tour</button><button ref={laterRef} type="button" className="button button-outline" onClick={onLater}>Not now</button></div>
+    </section>
+  </div>;
 }
 
 function AuthScreen({ onAuth, error, message, busy, authOptions, linkAction,
@@ -426,6 +455,28 @@ export default function App() {
   const [meetupBusy, setMeetupBusy] = useState(false);
   const [notice, setNotice] = useState(null);
   const [sendingVerification, setSendingVerification] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
+  const [tourPromptOpen, setTourPromptOpen] = useState(false);
+  const closeHelp = useCallback(() => {
+    if (me?.id != null) {
+      try { localStorage.setItem(`uiuc-gym-buddy-tour-v1:${me.id}`, 'done'); } catch { /* The tour remains dismissible if storage is unavailable. */ }
+    }
+    setHelpOpen(false);
+  }, [me?.id]);
+  const openHelp = useCallback(() => setHelpOpen(true), []);
+  const startHelpTour = useCallback(() => {
+    if (me?.id != null) {
+      try { localStorage.setItem(`uiuc-gym-buddy-tour-v1:${me.id}`, 'started'); } catch { /* The Help button remains available. */ }
+    }
+    setTourPromptOpen(false);
+    setHelpOpen(true);
+  }, [me?.id]);
+  const deferHelpTour = useCallback(() => {
+    if (me?.id != null) {
+      try { localStorage.setItem(`uiuc-gym-buddy-tour-v1:${me.id}`, 'deferred'); } catch { /* The prompt stays dismissible for this session. */ }
+    }
+    setTourPromptOpen(false);
+  }, [me?.id]);
   async function refreshData() {
     setLoadingMatches(true);
     const [availability, buddyData, meetupData] = await Promise.allSettled([api('/api/availability'), api('/api/matches'), api('/api/meetups')]);
@@ -437,6 +488,12 @@ export default function App() {
     if (failed) setNotice({ type: 'error', text: failed.reason.message || 'Some information could not load.' });
   }
   useEffect(() => { let active = true; (async () => { try { const data = await api('/api/me'); if (active) { setMe(data?.user || data?.me || data); await refreshData(); } } catch (e) { if (active && !/401|unauthorized|not authenticated|sign in to continue/i.test(e.message)) setAuthError(e.message); } finally { if (active) setChecking(false); } })(); return () => { active = false; }; }, []);
+  useEffect(() => {
+    if (me?.id == null) { setHelpOpen(false); setTourPromptOpen(false); return; }
+    try {
+      setTourPromptOpen(!localStorage.getItem(`uiuc-gym-buddy-tour-v1:${me.id}`));
+    } catch { setTourPromptOpen(true); }
+  }, [me?.id]);
   useEffect(() => { let active = true; api('/api/auth/config').then(data => { if (active) setAuthOptions({ loading: false, emailAuthEnabled: Boolean(data?.emailAuthEnabled), error: '' }); }).catch(() => { if (active) setAuthOptions({ loading: false, emailAuthEnabled: false, error: 'Could not check email sign-in. Check your connection and try reloading.' }); }); return () => { active = false; }; }, []);
   useEffect(() => {
     const onHashChange = () => {
@@ -530,5 +587,5 @@ export default function App() {
   if (!me || linkAction?.type === 'reset') return <AuthScreen onAuth={auth} error={authError}
     message={authMessage} busy={authBusy} authOptions={authOptions} linkAction={linkAction}
     signedIn={Boolean(me)} onCancelLink={() => setLinkAction(null)} />;
-  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><Sidebar view={view} setView={setView} me={me} onLogout={logout} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} pendingCount={pendingCount} /><main className="app-main" id="main-content" tabIndex={-1}><header className="topbar"><button type="button" className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button><div className="topbar-context"><span className="topbar-dot" /> WORKOUT COMMUNITY</div><div className="topbar-right"><span className="topbar-message">Make today a good day to move.</span><Avatar name={me.name} size="small" /></div></header>{me.emailVerified === false && <section className="email-verification-banner" aria-labelledby="email-verification-title"><div className="email-verification-copy"><span className="email-verification-icon"><Icon name="shield" size={21} /></span><div><h2 id="email-verification-title">Your account is ready</h2><p>Verify your email when you can so you can reset your password if you forget it.</p></div></div><button type="button" className="button button-outline" disabled={sendingVerification} onClick={sendVerificationEmail}>{sendingVerification ? 'Sending…' : 'Send verification email'}</button></section>}{notice && <div className="notice-wrap"><Notice type={notice.type} onClose={() => setNotice(null)}>{notice.text}</Notice></div>}{view === 'home' && <Home me={me} slots={slots} matches={matches} meetups={meetups} setView={setView} onRequest={setSelectedMatch} onChat={startChat} />}{view === 'matches' && <Matches matches={matches} slots={slots} onRequest={setSelectedMatch} onChat={startChat} setView={setView} loading={loadingMatches} onRefresh={refreshData} />}{view === 'now' && <PresencePage me={me} api={api} onChat={startChat} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'chats' && <ChatsPage me={me} api={api} activeChatId={activeChatId} setActiveChatId={setActiveChatId} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'availability' && <Availability slots={slots} onSave={saveSlots} setView={setView} />}{view === 'import' && <ImportSchedule slots={slots} onAdd={addImported} />}{view === 'meetups' && <Meetups meetups={meetups} me={me} onStatus={updateMeetup} saving={meetupBusy} />}{view === 'profile' && <Profile me={me} onSave={saveProfile} setView={setView} hasAvailability={slots.length > 0} />}</main>{selectedMatch && <RequestModal key={selectedMatch.user?.id || selectedMatch.id} match={selectedMatch} onClose={() => setSelectedMatch(null)} onSubmit={sendInvite} busy={meetupBusy} />}</div>;
+  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><Sidebar view={view} setView={setView} me={me} onLogout={logout} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} pendingCount={pendingCount} /><main className="app-main" id="main-content" tabIndex={-1}><header className="topbar"><button type="button" className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button><div className="topbar-context"><span className="topbar-dot" /> WORKOUT COMMUNITY</div><div className="topbar-right"><span className="topbar-message">Make today a good day to move.</span><button type="button" className="button button-outline help-trigger" onClick={openHelp}>Help</button><Avatar name={me.name} size="small" /></div></header><QuickTourPrompt open={tourPromptOpen} onStart={startHelpTour} onLater={deferHelpTour} />{me.emailVerified === false && <section className="email-verification-banner" aria-labelledby="email-verification-title"><div className="email-verification-copy"><span className="email-verification-icon"><Icon name="shield" size={21} /></span><div><h2 id="email-verification-title">Your account is ready</h2><p>Verify your email when you can so you can reset your password if you forget it.</p></div></div><button type="button" className="button button-outline" disabled={sendingVerification} onClick={sendVerificationEmail}>{sendingVerification ? 'Sending…' : 'Send verification email'}</button></section>}{notice && <div className="notice-wrap"><Notice type={notice.type} onClose={() => setNotice(null)}>{notice.text}</Notice></div>}{view === 'home' && <Home me={me} slots={slots} matches={matches} meetups={meetups} setView={setView} onRequest={setSelectedMatch} onChat={startChat} />}{view === 'matches' && <Matches matches={matches} slots={slots} onRequest={setSelectedMatch} onChat={startChat} setView={setView} loading={loadingMatches} onRefresh={refreshData} />}{view === 'now' && <PresencePage me={me} api={api} onChat={startChat} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'chats' && <ChatsPage me={me} api={api} activeChatId={activeChatId} setActiveChatId={setActiveChatId} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'availability' && <Availability slots={slots} onSave={saveSlots} setView={setView} />}{view === 'import' && <ImportSchedule slots={slots} onAdd={addImported} />}{view === 'meetups' && <Meetups meetups={meetups} me={me} onStatus={updateMeetup} saving={meetupBusy} />}{view === 'profile' && <Profile me={me} onSave={saveProfile} setView={setView} hasAvailability={slots.length > 0} />}</main>{selectedMatch && <RequestModal key={selectedMatch.user?.id || selectedMatch.id} match={selectedMatch} onClose={() => setSelectedMatch(null)} onSubmit={sendInvite} busy={meetupBusy} />}<GuidedHelp open={helpOpen} onClose={closeHelp} onNavigate={setView} /></div>;
 }

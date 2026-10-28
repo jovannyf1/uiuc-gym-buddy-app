@@ -204,6 +204,9 @@ struct MessagesEnvelope: Decodable { let messages: [ChatMessage] }
 struct MessageEnvelope: Decodable { let message: ChatMessage }
 struct OKEnvelope: Decodable { let ok: Bool }
 struct EmailAuthConfigEnvelope: Decodable { let emailAuthEnabled: Bool }
+struct AssistantConfigEnvelope: Decodable { let available: Bool }
+struct AssistantQuestionPayload: Encodable { let question: String }
+struct AssistantAnswerEnvelope: Decodable { let answer: String }
 struct EmailAcknowledgmentEnvelope: Decodable {
     let ok: Bool?
     let message: String?

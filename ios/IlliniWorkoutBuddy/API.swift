@@ -162,14 +162,19 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func registerEmail(name: String, email: String, password: String) async throws -> String {
+    func registerEmail(name: String, email: String, password: String) async throws {
         let body = try api.encode(RegisterPayload(
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             email: email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
             password: password
         ))
-        let result: EmailRegistrationEnvelope = try await api.request("api/auth/email/register", method: "POST", body: body)
-        return result.message
+        let result: UserEnvelope = try await api.request("api/auth/email/register", method: "POST", body: body)
+        currentUser = result.user
+        do {
+            try await refreshAll()
+        } catch {
+            errorMessage = "Your account was created, but some information could not load. Try opening the app again."
+        }
     }
 
     func loginWithEmail(email: String, password: String) async throws {
@@ -187,7 +192,19 @@ final class AppStore: ObservableObject {
             email: email.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         ))
         let result: EmailAcknowledgmentEnvelope = try await api.request("api/auth/email/resend", method: "POST", body: body)
-        return result.message ?? "If this account needs verification, a new link is on its way. Check your inbox and spam folder."
+        return result.message ?? "If this account needs verification, a link is on its way. Check your inbox and spam folder."
+    }
+
+    func sendEmailVerification() async throws -> String {
+        let result: EmailAcknowledgmentEnvelope = try await api.request(
+            "api/auth/email/verify/send", method: "POST", body: Data("{}".utf8))
+        return result.message ?? "Verification email sent. Check your inbox and spam folder."
+    }
+
+    func refreshAccountStatus() async {
+        guard currentUser != nil else { return }
+        guard let result: UserEnvelope = try? await api.request("api/me") else { return }
+        currentUser = result.user
     }
 
     func requestEmailPasswordReset(email: String) async throws -> String {

@@ -72,7 +72,7 @@ struct AuthView: View {
             if requestingPasswordReset {
                 Text("Reset your password")
                     .font(.title3.bold())
-                Text("Enter your email. Open the reset link from your inbox in a browser, then come back here to sign in.")
+                Text("Enter your verified email. Open the reset link from your inbox in a browser, then come back here to sign in.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 TextField("Email address", text: $email)
@@ -89,9 +89,9 @@ struct AuthView: View {
                 }
                     .disabled(busy)
             } else if awaitingVerification {
-                Text("Check your email")
+                Text("Get a verification link")
                     .font(.title3.bold())
-                Text("Open the verification link in your email, then come back here to sign in. Check your spam folder if you do not see it.")
+                Text("You can sign in without verifying. If you need a link for an unverified account, enter its email address and check your inbox or spam folder.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                 TextField("Email address", text: $email)
@@ -100,7 +100,7 @@ struct AuthView: View {
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .textFieldStyle(.roundedBorder)
-                Button("Resend verification email") { resendVerification() }
+                Button("Send verification email") { resendVerification() }
                     .disabled(busy || !store.emailAuthAvailable || email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button("Back to sign in") {
                     registeringEmail = false
@@ -132,7 +132,7 @@ struct AuthView: View {
                     .textFieldStyle(.roundedBorder)
 
                 if registeringEmail {
-                    Text("Use any email address you can verify. We’ll email a link before you can sign in. Your password must be at least 12 characters.")
+                    Text("You can use the app immediately. Verify your email later to keep password reset available. Your password must be at least 12 characters.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 }
@@ -154,7 +154,7 @@ struct AuthView: View {
                             requestingPasswordReset = true
                             emailNotice = nil
                         }
-                        Button("Need a verification email?") {
+                        Button("Need a verification link?") {
                             awaitingVerification = true
                             emailNotice = nil
                         }
@@ -178,9 +178,8 @@ struct AuthView: View {
         Task {
             do {
                 if registeringEmail {
-                    emailNotice = try await store.registerEmail(name: emailName, email: email, password: emailPassword)
+                    try await store.registerEmail(name: emailName, email: email, password: emailPassword)
                     emailPassword = ""
-                    awaitingVerification = true
                 } else {
                     try await store.loginWithEmail(email: email, password: emailPassword)
                     emailPassword = ""

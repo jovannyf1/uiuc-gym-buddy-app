@@ -62,6 +62,7 @@ struct UserProfile: Codable, Identifiable, Hashable {
     var bio: String
     var email: String?
     var partnerPreference: String?
+    var emailVerified: Bool?
 }
 
 struct TimeSlot: Codable, Hashable, Identifiable {
@@ -200,10 +201,6 @@ struct MessagesEnvelope: Decodable { let messages: [ChatMessage] }
 struct MessageEnvelope: Decodable { let message: ChatMessage }
 struct OKEnvelope: Decodable { let ok: Bool }
 struct EmailAuthConfigEnvelope: Decodable { let emailAuthEnabled: Bool }
-struct EmailRegistrationEnvelope: Decodable {
-    let verificationRequired: Bool
-    let message: String
-}
 struct EmailAcknowledgmentEnvelope: Decodable {
     let ok: Bool?
     let message: String?

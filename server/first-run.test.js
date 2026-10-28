@@ -57,33 +57,28 @@ async function request(endpoint, { method = 'GET', cookie, body } = {}) {
   return { status: response.status, body: await response.json(), cookie: response.headers.get('set-cookie')?.split(';')[0] };
 }
 
-async function verifiedStudent(name, email) {
+async function emailStudent(name, email) {
   const registered = await request('/api/auth/email/register', {
     method: 'POST', body: { name, email, password: 'first-run-test-password' },
   });
-  assert.equal(registered.status, 202);
-  assert.equal(registered.cookie, undefined);
-  const delivered = sentEmails.at(-1);
-  assert.deepEqual(delivered.to, [email]);
-  const token = /#verify=([A-Za-z0-9_-]{43})/.exec(delivered.text)?.[1];
-  assert.ok(token, 'verification email includes a link token');
-  const verified = await request('/api/auth/email/verify', {
-    method: 'POST', body: { token },
-  });
-  assert.equal(verified.status, 200);
-  assert.ok(verified.cookie, 'verification starts a session');
-  return { id: verified.body.user.id, cookie: verified.cookie };
+  assert.equal(registered.status, 201);
+  assert.ok(registered.cookie, 'registration starts a session');
+  assert.equal(registered.body.user.emailVerified, false);
+  assert.equal(sentEmails.length, 0, 'joining the app does not depend on email delivery');
+  return { id: registered.body.user.id, cookie: registered.cookie };
 }
 
-test('two new verified students can find a shared time, agree on a workout, and persist their data', async () => {
-  const alice = await verifiedStudent('Alice Test', 'alice@example.com');
-  const bob = await verifiedStudent('Bob Test', 'bob@example.com');
+test('two new email students can match, chat, meet, and persist data before verifying', async () => {
+  const alice = await emailStudent('Alice Test', 'alice@example.com');
+  const bob = await emailStudent('Bob Test', 'bob@example.com');
   const profile = {
     activities: ['Strength training'], locations: ['ARC'],
     experience: 'beginner', bio: 'Looking for a weekday gym buddy.',
   };
   for (const student of [alice, bob]) {
-    assert.equal((await request('/api/me', { method: 'PATCH', cookie: student.cookie, body: profile })).status, 200);
+    const updated = await request('/api/me', { method: 'PATCH', cookie: student.cookie, body: profile });
+    assert.equal(updated.status, 200);
+    assert.equal(updated.body.user.emailVerified, false);
   }
   assert.equal((await request('/api/availability', {
     method: 'PUT', cookie: alice.cookie,

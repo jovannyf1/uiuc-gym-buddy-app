@@ -1,6 +1,6 @@
 # UIUC Gym Buddy App
 
-UIUC Gym Buddy App helps people near UIUC find a workout partner who is free to go to the gym at the same time. Members can customize a profile, enter recurring free times by hand or upload a calendar export or schedule screenshot, review suggested free windows, find a compatible buddy, chat, and send a dated gym meetup invitation. A member can optionally show that they are working out now at a chosen campus gym; that status expires automatically. The app does **not** track gym busyness or GPS location. Email signup verifies an inbox, not student status.
+UIUC Gym Buddy App helps people near UIUC find a workout partner who is free to go to the gym at the same time. Members can customize a profile, enter recurring free times by hand or upload a calendar export or schedule screenshot, review suggested free windows, find a compatible buddy, chat, and send a dated gym meetup invitation. A member can optionally show that they are working out now at a chosen campus gym; that status expires automatically. The app does **not** track gym busyness or GPS location. Email verification is optional for account recovery and does not prove student status.
 
 ## Run it locally
 
@@ -14,7 +14,7 @@ npm --prefix client install
 npm run dev
 ```
 
-Open **http://localhost:5173**. To test email signup and password reset locally, set `EMAIL_FROM`, `PUBLIC_APP_URL=http://localhost:5173`, and either SMTP credentials or `RESEND_API_KEY` in a private `.env` file. The email form stays unavailable when delivery is not configured, so a person cannot create an account without a verification message. Local data is saved to `data/app.db` and remains on this computer. The legacy pilot endpoints remain for local development fixtures but are not offered in the app and must stay disabled on public deployments.
+Open **http://localhost:5173**. To test email signup and password reset locally, set `EMAIL_FROM`, `PUBLIC_APP_URL=http://localhost:5173`, and either SMTP credentials or `RESEND_API_KEY` in a private `.env` file. The email form stays unavailable when delivery is not configured. Registration signs a person in immediately; they can request an optional verification message from inside the app to protect account recovery. Local data is saved to `data/app.db` and remains on this computer. The legacy pilot endpoints remain for local development fixtures but are not offered in the app and must stay disabled on public deployments.
 
 To run the built version, run `npm run build` followed by `npm start`, then open **http://localhost:8787**.
 
@@ -40,18 +40,18 @@ A separate native SwiftUI iPhone app lives in [`ios/`](ios/). Its screens use th
 
 ## Sign in with email
 
-Verified email and password sign-in is available on the website and in the native iPhone app when a mail provider is configured with `EMAIL_FROM`, `PUBLIC_APP_URL`, and either SMTP credentials or `RESEND_API_KEY`. A person can sign up with **any email address they can verify**, set a password, open the verification link in their inbox, and then sign in. Password reset uses an emailed link and signs out old sessions. Password hashes, email-verification status, and sessions are saved in the app database; on Vercel that database is Supabase Postgres. The app never stores the email service password in the website or iPhone app. Email verification proves control of that mailbox, **not** enrollment at UIUC. NetID sign-in is deferred and is not available in this version.
+Email and password sign-in is available on the website and in the native iPhone app when a mail provider is configured with `EMAIL_FROM`, `PUBLIC_APP_URL`, and either SMTP credentials or `RESEND_API_KEY`. A person can sign up with **any email address**, use the app immediately, and verify the address later from a reminder inside the app. Verification matters for account recovery: password-reset email is available only after the address is verified. Password reset signs out old sessions. Password hashes, verification status, and sessions are saved in the app database; on Vercel that database is Supabase Postgres. The app never stores the email service password in the website or iPhone app. Verification proves control of that mailbox, **not** enrollment at UIUC. NetID sign-in is deferred and is not available in this version.
 
 ## What works in this version
 
-- Verified email registration, sign-in, password reset, saved profiles, and optional partner-gender preferences
+- Immediate email registration and sign-in, optional verification for account recovery, password reset for verified accounts, saved profiles, and optional partner-gender preferences
 - Manual weekly availability and schedule-import suggestions
 - Matches based on shared free windows and gym locations
 - Dated meetup invitations with accept, decline, and cancel actions
 - Private chats with compatible students, opt-in expiring working-out-now status, and block/report controls
 - Responsive web interface with iPhone Home Screen installation, plus a native SwiftUI app source project
 
-The source includes a class pilot; a public deployment is not live yet. To make it usable by classmates, create the free Vercel and Supabase projects, set the server-only database and email variables, then test the public address. The screenshot AI path needs an `OPENAI_API_KEY` if it will be used and may incur separate API charges. Before a wider campus launch, add human review of reports, a privacy/retention policy, and student-eligibility checks, then test the experience with real students and assistive technology. Live Google/Outlook account syncing would require OAuth setup; Apple Calendar has no equivalent general web sign-in, so `.ics` export is the supported path here.
+The public website is at [uiuc-gym-buddy-app-client.vercel.app](https://uiuc-gym-buddy-app-client.vercel.app/). Test its account, matching, and chat flows with real classmates before treating the public journey as complete. The screenshot AI path needs an `OPENAI_API_KEY` if it will be used and may incur separate API charges. Before a wider campus launch, add human review of reports, a privacy/retention policy, and student-eligibility checks, then test the experience with real students and assistive technology. Live Google/Outlook account syncing would require OAuth setup; Apple Calendar has no equivalent general web sign-in, so `.ics` export is the supported path here.
 
 ## Continue in a new Codex chat
 

@@ -58,6 +58,9 @@ struct ProfileView: View {
             }
             Section("Account") {
                 if let email = store.currentUser?.email { LabeledContent("Email", value: email) }
+                if let verified = store.currentUser?.emailVerified {
+                    LabeledContent("Email status", value: verified ? "Verified" : "Not verified")
+                }
                 Button("Server settings", systemImage: "server.rack") { showingServer = true }
                 Button("Sign out", role: .destructive) {
                     Task { await store.logout() }

@@ -65,7 +65,7 @@ function messageFor(row) {
 
 // Social data stays on the server. Only explicitly published, unexpired gym
 // presence is discoverable; private weekly availability is never returned here.
-export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityRequired = false,
+export function registerSocialRoutes({ app, db, requireAuth, emailIdentityRequired = false,
   trustedUser = () => true }) {
   // Raw DatabaseSync remains supported in tests that inject it directly.
   if ((db.kind ?? 'sqlite') === 'sqlite') db.exec(`
@@ -131,14 +131,14 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
 
   const handle = fn => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
 
-  async function requireVerifiedIdentity(userId) {
+  async function requireEmailIdentity(userId) {
     if (!await trustedUser(userId)) {
-      throw new InputError('A verified account is required.', 403);
+      throw new InputError('An email account is required.', 403);
     }
   }
 
-  const trustedPredicate = column => verifiedIdentityRequired
-    ? `EXISTS (SELECT 1 FROM email_identities e WHERE e.user_id = ${column} AND e.verified_at IS NOT NULL)`
+  const trustedPredicate = column => emailIdentityRequired
+    ? `EXISTS (SELECT 1 FROM email_identities e WHERE e.user_id = ${column})`
     : '1 = 1';
 
   async function isBlocked(firstId, secondId) {
@@ -171,7 +171,7 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
   }
 
   app.get('/api/presence/me', requireAuth, handle(async (req, res) => {
-    await requireVerifiedIdentity(req.user.id);
+    await requireEmailIdentity(req.user.id);
     const now = Date.now();
     await deleteExpiredPresence.run(now);
     const row = await db.prepare('SELECT * FROM workout_presence WHERE user_id = ? AND expires_at > ?')
@@ -180,7 +180,7 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
   }));
 
   app.put('/api/presence', requireAuth, handle(async (req, res) => {
-      await requireVerifiedIdentity(req.user.id);
+      await requireEmailIdentity(req.user.id);
       if (!objectWithOnlyKeys(req.body, ['activity', 'location', 'durationMinutes'])) {
         throw new InputError('Choose a gym and workout activity.');
       }
@@ -213,7 +213,7 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
   }));
 
   app.get('/api/presence/nearby', requireAuth, handle(async (req, res) => {
-    await requireVerifiedIdentity(req.user.id);
+    await requireEmailIdentity(req.user.id);
     const now = Date.now();
     await deleteExpiredPresence.run(now);
     const people = [];
@@ -234,7 +234,7 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
   }));
 
   app.get('/api/chats', requireAuth, handle(async (req, res) => {
-    await requireVerifiedIdentity(req.user.id);
+    await requireEmailIdentity(req.user.id);
     const rows = await db.prepare(`SELECT c.* FROM chats c
       WHERE (c.user_a_id = ? OR c.user_b_id = ?)
         AND ${trustedPredicate('c.user_a_id')} AND ${trustedPredicate('c.user_b_id')}
@@ -247,7 +247,7 @@ export function registerSocialRoutes({ app, db, requireAuth, verifiedIdentityReq
   }));
 
   app.post('/api/chats', requireAuth, handle(async (req, res) => {
-      await requireVerifiedIdentity(req.user.id);
+      await requireEmailIdentity(req.user.id);
       if (!objectWithOnlyKeys(req.body, ['toUserId'])) throw new InputError('Choose a member to chat with.');
       const targetId = positiveId(req.body.toUserId);
       if (targetId === req.user.id) throw new InputError('Choose another member to chat with.');

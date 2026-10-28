@@ -160,7 +160,12 @@ export async function hasVerifiedIdentity(db, userId) {
   return Boolean(await db.prepare(`SELECT 1 FROM email_identities WHERE user_id = ? AND verified_at IS NOT NULL`).get(userId));
 }
 
+export async function hasEmailIdentity(db, userId) {
+  return Boolean(await db.prepare('SELECT 1 FROM email_identities WHERE user_id = ?').get(userId));
+}
+
 export function registerEmailRoutes({ app, db, createSession, profile, hashPassword, passwordMatches,
+  requireAuth = (_req, _res, next) => next(new InputError('Sign in to continue.', 401)),
   createSmtpTransport = nodemailer.createTransport }) {
   const settings = emailAuthSettings();
   const deliver = (config, to, subject, body) => sendEmail(config, to, subject, body, createSmtpTransport);
@@ -172,7 +177,7 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
   const generic = { ok: true };
 
   app.post('/api/auth/email/register', handle(async (req, res) => {
-    const config = enabled();
+    enabled();
     if (!onlyKeys(req.body, ['name', 'email', 'password'])) throw new InputError('Enter your name, email, and password.');
     await limited(db, 'register-ip', req.ip, 10, 60 * 60 * 1000);
     const name = typeof req.body.name === 'string' ? req.body.name.trim() : '';
@@ -200,17 +205,10 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
       }
       throw error;
     }
-    const token = await createToken(db, userId, 'verify', VERIFY_AGE_MS);
-    try {
-      await deliver(config, email, 'Verify your UIUC Gym Buddy email',
-        `Use this link to verify your email and finish creating your account:\n\n${link(config, 'verify', token)}\n\nThis link expires in 30 minutes. If you did not request it, ignore this email.`);
-    } catch (error) {
-      // Avoid a stranded address after a failed first delivery. An existing
-      // account is never deleted by resend or password-reset failures.
-      await db.prepare('DELETE FROM users WHERE id = ?').run(userId);
-      throw error;
-    }
-    res.status(202).json({ verificationRequired: true, message: 'Check your email for a verification link.' });
+    await createSession(req, res, userId);
+    const user = await db.prepare(`SELECT u.*, e.verified_at AS email_verified_at FROM users u
+      JOIN email_identities e ON e.user_id = u.id WHERE u.id = ?`).get(userId);
+    res.status(201).json({ user: profile(user, true) });
   }));
 
   app.post('/api/auth/email/verify', handle(async (req, res) => {
@@ -231,8 +229,29 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
       await db.prepare('DELETE FROM email_auth_tokens WHERE user_id = ? AND purpose = ?').run(userId, 'verify');
     });
     await createSession(req, res, userId);
-    const user = await db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
+    const user = await db.prepare(`SELECT u.*, e.verified_at AS email_verified_at FROM users u
+      JOIN email_identities e ON e.user_id = u.id WHERE u.id = ?`).get(userId);
     res.json({ user: profile(user, true) });
+  }));
+
+  app.post('/api/auth/email/verify/send', requireAuth, handle(async (req, res) => {
+    const config = enabled();
+    if (req.body != null && !onlyKeys(req.body, [])) throw new InputError('Check the verification request.');
+    if (!await hasEmailIdentity(db, req.user.id)) throw new InputError('This account cannot verify an email.', 403);
+    if (await hasVerifiedIdentity(db, req.user.id)) {
+      return res.json({ ok: true, emailVerified: true, message: 'Your email is already verified.' });
+    }
+    await limited(db, 'resend-ip', req.ip, 10, 60 * 60 * 1000);
+    await limited(db, 'resend-email', req.user.email, 3, 60 * 60 * 1000);
+    const token = await createToken(db, req.user.id, 'verify', VERIFY_AGE_MS);
+    try {
+      await deliver(config, req.user.email, 'Verify your UIUC Gym Buddy email',
+        `Verify your email to protect your account and enable password reset:\n\n${link(config, 'verify', token)}\n\nThis link expires in 30 minutes. If you did not request it, ignore this email.`);
+    } catch (error) {
+      await db.prepare('DELETE FROM email_auth_tokens WHERE token_hash = ?').run(tokenHash(token));
+      throw error;
+    }
+    res.json({ ok: true, emailVerified: false, message: 'Verification email sent. Check your inbox and spam folder.' });
   }));
 
   app.post('/api/auth/email/resend', handle(async (req, res) => {
@@ -253,7 +272,7 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
         // Keep account existence private. Earlier delivered links still work.
       }
     }
-    res.json({ ...generic, message: 'If that address has a pending account, a new link is on its way.' });
+    res.json({ ...generic, message: 'If that address has an unverified account, a new link is on its way.' });
   }));
 
   app.post('/api/auth/email/login', handle(async (req, res) => {
@@ -263,13 +282,10 @@ export function registerEmailRoutes({ app, db, createSession, profile, hashPassw
     const email = normalizeEmail(req.body.email);
     const password = req.body.password;
     if (typeof password !== 'string') throw new InputError('Enter your email and password.');
-    const user = await db.prepare(`SELECT u.* FROM users u JOIN email_identities e ON e.user_id = u.id
+    const user = await db.prepare(`SELECT u.*, e.verified_at AS email_verified_at FROM users u JOIN email_identities e ON e.user_id = u.id
       WHERE u.email = ?`).get(email);
     if (!user || !(await passwordMatches(password, user.password_salt, user.password_hash))) {
       throw new InputError('Email or password is incorrect.', 401);
-    }
-    if (!await hasVerifiedIdentity(db, user.id)) {
-      throw new InputError('Verify your email before signing in. You can request a new link.', 403);
     }
     await createSession(req, res, user.id);
     res.json({ user: profile(user, true) });

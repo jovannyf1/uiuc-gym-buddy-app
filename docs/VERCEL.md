@@ -24,7 +24,7 @@ In **Vercel → Project → Settings → Environment Variables**, add these for 
 
 These secrets stay on the server. For Gmail, make an App Password in the Google account's security settings and use that in `SMTP_PASSWORD`; do not use the usual account password. Vercel permits authenticated SMTP over ports 465 and 587, and the app waits for delivery before replying. [Vercel SMTP guidance](https://vercel.com/kb/guide/serverless-functions-and-smtp). Resend can also be used instead by setting `RESEND_API_KEY` and leaving the SMTP host blank; sending to classmates requires a verified sender domain.
 
-The existing app verifies email addresses itself and stores the hashed account credentials and sessions in Supabase Postgres. Every application table has row-level security enabled and no browser-role policies; the Express server uses the private database URI, so browsers cannot read account data through Supabase's Data API. Email verification confirms access to an inbox, not UIUC enrollment. The built-in Supabase Auth email sender is not used. If no SMTP credentials are set, email signup stays disabled rather than accepting unverified accounts.
+The app stores hashed account credentials, optional email-verification status, and sessions in Supabase Postgres. New users can sign in before verification; an in-app reminder offers a link to verify the address for password recovery. Every application table has row-level security enabled and no browser-role policies; the Express server uses the private database URI, so browsers cannot read account data through Supabase's Data API. Email verification confirms access to an inbox, not UIUC enrollment. The built-in Supabase Auth email sender is not used. If no email provider is configured, email signup stays disabled.
 
 `OPENAI_API_KEY` is optional for interpreting screenshot schedules; it is a separate API service and may have usage charges. Manual availability and `.ics` calendar imports do not need that key. NetID sign-in is deferred and is not part of this launch. Production never enables the local pilot account endpoints.
 
@@ -32,7 +32,7 @@ The existing app verifies email addresses itself and stores the hashed account c
 
 After Vercel finishes its first production deployment, open the Vercel HTTPS address. Check that `/api/auth/config` returns JSON with `emailAuthEnabled: true`, then test these paths in the app:
 
-- Create an account using a real inbox, open its verification email, and sign in. Try a wrong password, then request a reset email and sign in with a new password.
+- Create an account using a real inbox and confirm the app opens immediately, before verifying email. Sign out and back in with the same password. From inside the app, request the optional verification link, open it, then request a password-reset email and sign in with a new password. A wrong password must still be rejected.
 - Edit the profile and availability; refresh and confirm both remain saved.
 - Use a second account in a separate browser to find a buddy, start a chat, and send a meetup invitation.
 - Upload a small `.ics` file and, if `OPENAI_API_KEY` is configured, a schedule screenshot under 4 MB.

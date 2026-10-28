@@ -52,3 +52,11 @@
 .stats-grid .stat-card div span{font-size:12px}
 .result-warning{font-size:13px}
 @media(max-width:760px){.busy-review ul{grid-template-columns:1fr}}
+.email-verification-banner{display:flex;align-items:center;justify-content:space-between;gap:18px;margin:19px clamp(24px,4vw,58px) 0;padding:16px 18px;border:1px solid #ebd9b8;border-radius:13px;background:#fff8e9;color:#6e5637}
+.email-verification-copy{display:flex;align-items:flex-start;gap:12px;flex:1;min-width:0}
+.email-verification-icon{display:inline-flex;align-items:center;justify-content:center;flex:none;width:37px;height:37px;border-radius:10px;background:#f9e9ca;color:#9f6331}
+.email-verification-banner h2{font-size:17px;line-height:1.2;margin:0 0 3px;color:#5c4228}
+.email-verification-banner p{font-size:12px;line-height:1.45;margin:0;color:#80694a}
+.email-verification-banner .button{flex:none;min-height:39px;padding:8px 13px;font-size:12px;text-align:center}
+@media(max-width:760px){.email-verification-banner{align-items:stretch;flex-direction:column;margin:15px 20px 0}.email-verification-banner .button{align-self:flex-start}}
+@media(max-width:560px){.email-verification-banner{margin:13px 15px 0}.email-verification-banner .button{align-self:stretch}}

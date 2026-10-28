@@ -56,7 +56,7 @@ function tokenFromLastEmail(kind) {
   return match[1];
 }
 
-test('verified email sign-up gates social access, rejects pilot identities, and resets password', async () => {
+test('new email account can sign in before verification, excludes pilot identities, and resets after verification', async () => {
   const config = await request('/api/auth/config');
   assert.deepEqual(config.body, { pilotAuthEnabled: false, emailAuthEnabled: true });
   assert.equal((await request('/api/auth/netid/config')).status, 404);
@@ -67,23 +67,35 @@ test('verified email sign-up gates social access, rejects pilot identities, and 
   assert.equal((await request('/api/auth/login', {
     email: 'pilot@illinois.edu', password: 'oldpassword',
   })).status, 403);
+  assert.equal((await request('/api/auth/email/verify/send', {})).status, 401);
 
   const registered = await request('/api/auth/email/register', {
     name: 'Taylor Example', email: 'taylor@example.org', password: 'long-unique-password',
   });
-  assert.equal(registered.status, 202);
-  assert.equal(registered.body.verificationRequired, true);
-  assert.equal(registered.cookie, undefined);
-  assert.equal(sent.length, 1);
-  assert.match(sent[0].text, /https:\/\/gym-buddy\.example\.com\/#verify=/);
+  assert.equal(registered.status, 201);
+  assert.equal(registered.body.user.emailVerified, false);
+  assert.ok(registered.cookie, 'registration starts a session');
+  assert.equal(sent.length, 0, 'registration does not depend on email delivery');
 
   const before = await request('/api/auth/email/login', {
     email: 'taylor@example.org', password: 'long-unique-password',
   });
-  assert.equal(before.status, 403);
-  assert.equal(before.cookie, undefined);
+  assert.equal(before.status, 200);
+  assert.equal(before.body.user.emailVerified, false);
+  assert.ok(before.cookie);
+  const pendingMe = await request('/api/me', undefined, registered.cookie);
+  assert.equal(pendingMe.status, 200);
+  assert.equal(pendingMe.body.user.emailVerified, false);
+  assert.equal((await request('/api/availability', undefined, registered.cookie)).status, 200);
   const pendingUser = db.prepare('SELECT id FROM users WHERE email = ?').get('taylor@example.org');
   assert.equal(db.prepare('SELECT verified_at FROM email_identities WHERE user_id = ?').get(pendingUser.id).verified_at, null);
+  assert.equal((await request('/api/auth/email/reset/request', { email: 'taylor@example.org' })).status, 200);
+  assert.equal(sent.length, 0, 'password reset does not send to an unverified address');
+
+  const sendVerification = await request('/api/auth/email/verify/send', {}, registered.cookie);
+  assert.equal(sendVerification.status, 200);
+  assert.equal(sent.length, 1);
+  assert.match(sent[0].text, /https:\/\/gym-buddy\.example\.com\/#verify=/);
 
   const bad = await request('/api/auth/email/verify', { token: randomBytes(32).toString('base64url') });
   assert.equal(bad.status, 400);
@@ -91,8 +103,11 @@ test('verified email sign-up gates social access, rejects pilot identities, and 
   const verified = await request('/api/auth/email/verify', { token });
   assert.equal(verified.status, 200);
   assert.equal(verified.body.user.email, 'taylor@example.org');
+  assert.equal(verified.body.user.emailVerified, true);
   assert.ok(verified.cookie);
-  assert.equal((await request('/api/me', undefined, verified.cookie)).status, 200);
+  assert.equal((await request('/api/me', undefined, verified.cookie)).body.user.emailVerified, true);
+  assert.equal((await request('/api/auth/email/verify/send', {}, verified.cookie)).body.emailVerified, true);
+  assert.equal(sent.length, 1, 'already verified members do not receive another email');
   assert.equal((await request('/api/auth/email/verify', { token })).status, 400);
   assert.equal((await request('/api/auth/email/login', {
     email: 'taylor@example.org', password: 'wrong-password',
@@ -137,9 +152,11 @@ test('verified email sign-up gates social access, rejects pilot identities, and 
 });
 
 test('verification resend keeps prior unexpired links and returns the same response for unknown addresses', async () => {
-  assert.equal((await request('/api/auth/email/register', {
+  const registered = await request('/api/auth/email/register', {
     name: 'Sam Example', email: 'sam@example.org', password: 'another-long-password',
-  })).status, 202);
+  });
+  assert.equal(registered.status, 201);
+  assert.equal((await request('/api/auth/email/verify/send', {}, registered.cookie)).status, 200);
   const first = tokenFromLastEmail('verify');
   const unknown = await request('/api/auth/email/resend', { email: 'nobody@example.org' });
   const resend = await request('/api/auth/email/resend', { email: 'sam@example.org' });
@@ -151,16 +168,18 @@ test('verification resend keeps prior unexpired links and returns the same respo
   assert.equal((await request('/api/auth/email/verify', { token: second })).status, 400);
 });
 
-test('failed resend and reset delivery leave earlier emailed links usable', async () => {
-  assert.equal((await request('/api/auth/email/register', {
+test('failed optional verification and reset delivery leave earlier emailed links usable', async () => {
+  const registered = await request('/api/auth/email/register', {
     name: 'Morgan Example', email: 'morgan@example.org', password: 'more-long-password',
-  })).status, 202);
+  });
+  assert.equal(registered.status, 201);
+  assert.equal((await request('/api/auth/email/verify/send', {}, registered.cookie)).status, 200);
   const initialVerify = tokenFromLastEmail('verify');
   deliveryFails = true;
-  const resend = await request('/api/auth/email/resend', { email: 'morgan@example.org' });
+  const resend = await request('/api/auth/email/verify/send', {}, registered.cookie);
   const failedVerify = tokenFromLastEmail('verify');
   deliveryFails = false;
-  assert.equal(resend.status, 200);
+  assert.equal(resend.status, 503);
   assert.equal((await request('/api/auth/email/verify', { token: failedVerify })).status, 400);
   assert.equal((await request('/api/auth/email/verify', { token: initialVerify })).status, 200);
 

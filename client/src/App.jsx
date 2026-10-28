@@ -175,7 +175,7 @@ function AuthScreen({ onAuth, error, message, busy, authOptions, linkAction,
     event.preventDefault();
     const result = await onAuth(mode, { name: name.trim(), email: email.trim(), password,
       token: linkAction?.type === 'reset' ? linkAction.token : undefined });
-    if (result?.verificationRequired) setMode('check-email');
+    if (result?.user) setPassword('');
     if (result?.resetRequested) setMode('reset-sent');
     if (result?.resetCompleted) { setPassword(''); setMode('login'); }
   }
@@ -190,23 +190,22 @@ function AuthScreen({ onAuth, error, message, busy, authOptions, linkAction,
       </div>
       <div className="auth-visual-bottom"><span className="hero-kicker">YOUR CAMPUS. YOUR PACE. YOUR PEOPLE.</span><h1>Show up stronger,<br /><em>together.</em></h1><p>Find a workout buddy who fits your schedule, your goals, and your way of moving.</p></div>
     </div>
-    <div className="auth-panel"><div className="auth-panel-inner"><div className="auth-mobile-brand"><Brand /></div><span className="eyebrow">WELCOME TO UIUC GYM BUDDY</span><h2>{mode === 'login' ? 'Welcome back.' : mode === 'reset-request' ? 'Reset your password.' : mode === 'reset-complete' ? 'Choose a new password.' : mode === 'check-email' || mode === 'reset-sent' ? 'Check your email.' : 'Find your people.'}</h2><p className="auth-lede">Meet people who are ready to work out when you are.</p>
+    <div className="auth-panel"><div className="auth-panel-inner"><div className="auth-mobile-brand"><Brand /></div><span className="eyebrow">WELCOME TO UIUC GYM BUDDY</span><h2>{mode === 'login' ? 'Welcome back.' : mode === 'reset-request' ? 'Reset your password.' : mode === 'reset-complete' ? 'Choose a new password.' : mode === 'reset-sent' ? 'Check your email.' : 'Find your people.'}</h2><p className="auth-lede">Meet people who are ready to work out when you are.</p>
       {authOptions.loading ? <p className="auth-status" role="status">Checking email sign-in…</p>
         : !authOptions.emailAuthEnabled && <div className="auth-pending" role="status"><Icon name="lock" size={23} /><h3>Email sign-in setup pending</h3><p>{authOptions.error || 'Account creation and sign-in have not been connected on this server yet.'}</p></div>}
-      {mode === 'register' && <p className="auth-email-note">Use any email address you can verify. We’ll send a link to confirm it before you sign in.</p>}
       {(mode === 'register' || mode === 'login') && <div className="auth-tabs" role="group" aria-label="Account action"><button type="button" aria-pressed={mode === 'register'} className={mode === 'register' ? 'active' : ''} onClick={() => setMode('register')}>Create account</button><button type="button" aria-pressed={mode === 'login'} className={mode === 'login' ? 'active' : ''} onClick={() => setMode('login')}>Sign in</button></div>}
       {linkAction?.type === 'verify' && <p className="auth-status" role="status">Verifying your email…</p>}
       {message && <p className="inline-success" role="status"><Icon name="check" size={16} />{message}</p>}
       {error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}
-      {(mode === 'check-email' || mode === 'reset-sent') ? <div className="auth-followup"><p>{mode === 'check-email' ? 'Open the link in your inbox to finish creating your account.' : 'If your verified account exists, a password-reset link is on its way.'}</p>{mode === 'check-email' && <button type="button" className="link-button" disabled={busy || !authOptions.emailAuthEnabled} onClick={() => onAuth('resend', { email })}>Send another verification link</button>}<button type="button" className="link-button" onClick={() => setMode('login')}>Back to sign in</button></div> :
+      {mode === 'reset-sent' ? <div className="auth-followup"><p>If your verified account exists, a password-reset link is on its way.</p><button type="button" className="link-button" onClick={() => setMode('login')}>Back to sign in</button></div> :
       <form className="auth-form" onSubmit={submit}>
         {mode === 'register' && <label>Full name<input type="text" autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Your name" required maxLength={80} /></label>}
         {mode !== 'reset-complete' && <label>Email address<input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required /></label>}
         {(mode === 'register' || mode === 'login' || mode === 'reset-complete') && <label>{mode === 'reset-complete' ? 'New password' : 'Password'}<input type="password" autoComplete={mode === 'login' ? 'current-password' : 'new-password'} value={password} onChange={e => setPassword(e.target.value)} placeholder={mode === 'login' ? 'Your password' : 'At least 12 characters'} required minLength={mode === 'login' ? 1 : 12} /></label>}
         <button className="button button-primary button-full" type="submit" disabled={busy || !authOptions.emailAuthEnabled || linkAction?.type === 'verify'}>{busy ? 'Just a moment…' : mode === 'register' ? 'Create account' : mode === 'reset-request' ? 'Email reset link' : mode === 'reset-complete' ? 'Set new password' : 'Sign in'}<Icon name="arrow" size={18} /></button>
         {mode === 'login' && <button type="button" className="link-button auth-helper" onClick={() => setMode('reset-request')}>Forgot password?</button>}
-        {mode === 'login' && <button type="button" className="link-button auth-helper" disabled={!email.trim() || busy || !authOptions.emailAuthEnabled} onClick={() => onAuth('resend', { email })}>Resend verification link</button>}
         {mode === 'reset-request' && <button type="button" className="link-button auth-helper" onClick={() => setMode('login')}>Back to sign in</button>}
+        {mode === 'reset-request' && <button type="button" className="link-button auth-helper" disabled={!email.trim() || busy || !authOptions.emailAuthEnabled} onClick={() => onAuth('resend', { email })}>Recover an unverified account</button>}
         {mode === 'reset-complete' && <button type="button" className="link-button auth-helper" onClick={() => signedIn ? onCancelLink() : setMode('login')}>{signedIn ? 'Back to app' : 'Back to sign in'}</button>}
       </form>}
       <p className="auth-footnote"><Icon name="shield" size={17} /> Your schedule is reviewed before any free times are added to your profile.</p>
@@ -424,6 +423,7 @@ export default function App() {
   const [activeChatId, setActiveChatId] = useState(null);
   const [meetupBusy, setMeetupBusy] = useState(false);
   const [notice, setNotice] = useState(null);
+  const [sendingVerification, setSendingVerification] = useState(false);
   async function refreshData() {
     setLoadingMatches(true);
     const [availability, buddyData, meetupData] = await Promise.allSettled([api('/api/availability'), api('/api/matches'), api('/api/meetups')]);
@@ -456,7 +456,8 @@ export default function App() {
         setMe(data.user);
         await refreshData();
         setView('profile');
-      } catch (error) { setAuthError(error.message); }
+        setNotice({ type: 'success', text: 'Your email is verified. You can now reset your password if you need to.' });
+      } catch (error) { setAuthError(error.message); setNotice({ type: 'error', text: error.message }); }
       finally { processedVerifyLink.current = null; setAuthBusy(false); setLinkAction(null); }
     })();
   }, [checking, linkAction]);
@@ -483,7 +484,7 @@ export default function App() {
         await api(mode === 'resend' ? '/api/auth/email/resend' : '/api/auth/email/reset/request', {
           method: 'POST', body: JSON.stringify({ email: values.email }),
         });
-        if (mode === 'resend') setAuthMessage('If that address has a pending account, a new link is on its way.');
+        if (mode === 'resend') setAuthMessage('If that address has an unverified account, a link is on its way.');
         return mode === 'reset-request' ? { resetRequested: true } : { ok: true };
       }
       if (mode === 'reset-complete') {
@@ -497,17 +498,22 @@ export default function App() {
       const payload = mode === 'register' ? { name: values.name, email: values.email, password: values.password }
         : { email: values.email, password: values.password };
       const result = await api(`/api/auth/email/${mode}`, { method: 'POST', body: JSON.stringify(payload) });
-      if (result?.verificationRequired) {
-        setAuthMessage(result.message || 'Check your email for a verification link.');
-        return result;
-      }
-      const data = await api('/api/me');
+      const data = result?.user ? result : await api('/api/me');
       setMe(data?.user || data?.me || data);
       await refreshData();
       setView(mode === 'register' ? 'profile' : 'home');
       return result;
     } catch (error) { setAuthError(error.message); return null; }
     finally { setAuthBusy(false); }
+  }
+  async function sendVerificationEmail() {
+    if (sendingVerification) return;
+    setSendingVerification(true);
+    try {
+      const result = await api('/api/auth/email/verify/send', { method: 'POST', body: JSON.stringify({}) });
+      setNotice({ type: 'success', text: result?.message || 'Verification email sent. Check your inbox and spam folder.' });
+    } catch (error) { setNotice({ type: 'error', text: error.message }); }
+    finally { setSendingVerification(false); }
   }
   async function logout() { try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* Clear the local session even if the network fails. */ } setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null); setView('home'); setMobileOpen(false); }
   async function saveProfile(values) { const data = await api('/api/me', { method: 'PATCH', body: JSON.stringify(values) }); setMe(data?.user || data?.me || data); const buddyData = await api('/api/matches'); setMatches(buddyData.matches || []); setNotice({ type: 'success', text: 'Your profile is updated.' }); }
@@ -521,5 +527,5 @@ export default function App() {
   if (!me || linkAction?.type === 'reset') return <AuthScreen onAuth={auth} error={authError}
     message={authMessage} busy={authBusy} authOptions={authOptions} linkAction={linkAction}
     signedIn={Boolean(me)} onCancelLink={() => setLinkAction(null)} />;
-  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><Sidebar view={view} setView={setView} me={me} onLogout={logout} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} pendingCount={pendingCount} /><main className="app-main" id="main-content" tabIndex={-1}><header className="topbar"><button type="button" className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button><div className="topbar-context"><span className="topbar-dot" /> WORKOUT COMMUNITY</div><div className="topbar-right"><span className="topbar-message">Make today a good day to move.</span><Avatar name={me.name} size="small" /></div></header>{notice && <div className="notice-wrap"><Notice type={notice.type} onClose={() => setNotice(null)}>{notice.text}</Notice></div>}{view === 'home' && <Home me={me} slots={slots} matches={matches} meetups={meetups} setView={setView} onRequest={setSelectedMatch} onChat={startChat} />}{view === 'matches' && <Matches matches={matches} slots={slots} onRequest={setSelectedMatch} onChat={startChat} setView={setView} loading={loadingMatches} onRefresh={refreshData} />}{view === 'now' && <PresencePage me={me} api={api} onChat={startChat} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'chats' && <ChatsPage me={me} api={api} activeChatId={activeChatId} setActiveChatId={setActiveChatId} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'availability' && <Availability slots={slots} onSave={saveSlots} setView={setView} />}{view === 'import' && <ImportSchedule slots={slots} onAdd={addImported} />}{view === 'meetups' && <Meetups meetups={meetups} me={me} onStatus={updateMeetup} saving={meetupBusy} />}{view === 'profile' && <Profile me={me} onSave={saveProfile} setView={setView} hasAvailability={slots.length > 0} />}</main>{selectedMatch && <RequestModal key={selectedMatch.user?.id || selectedMatch.id} match={selectedMatch} onClose={() => setSelectedMatch(null)} onSubmit={sendInvite} busy={meetupBusy} />}</div>;
+  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><Sidebar view={view} setView={setView} me={me} onLogout={logout} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} pendingCount={pendingCount} /><main className="app-main" id="main-content" tabIndex={-1}><header className="topbar"><button type="button" className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button><div className="topbar-context"><span className="topbar-dot" /> WORKOUT COMMUNITY</div><div className="topbar-right"><span className="topbar-message">Make today a good day to move.</span><Avatar name={me.name} size="small" /></div></header>{me.emailVerified === false && <section className="email-verification-banner" aria-labelledby="email-verification-title"><div className="email-verification-copy"><span className="email-verification-icon"><Icon name="shield" size={21} /></span><div><h2 id="email-verification-title">Your account is ready</h2><p>Verify your email when you can so you can reset your password if you forget it.</p></div></div><button type="button" className="button button-outline" disabled={sendingVerification} onClick={sendVerificationEmail}>{sendingVerification ? 'Sending…' : 'Send verification email'}</button></section>}{notice && <div className="notice-wrap"><Notice type={notice.type} onClose={() => setNotice(null)}>{notice.text}</Notice></div>}{view === 'home' && <Home me={me} slots={slots} matches={matches} meetups={meetups} setView={setView} onRequest={setSelectedMatch} onChat={startChat} />}{view === 'matches' && <Matches matches={matches} slots={slots} onRequest={setSelectedMatch} onChat={startChat} setView={setView} loading={loadingMatches} onRefresh={refreshData} />}{view === 'now' && <PresencePage me={me} api={api} onChat={startChat} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'chats' && <ChatsPage me={me} api={api} activeChatId={activeChatId} setActiveChatId={setActiveChatId} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'availability' && <Availability slots={slots} onSave={saveSlots} setView={setView} />}{view === 'import' && <ImportSchedule slots={slots} onAdd={addImported} />}{view === 'meetups' && <Meetups meetups={meetups} me={me} onStatus={updateMeetup} saving={meetupBusy} />}{view === 'profile' && <Profile me={me} onSave={saveProfile} setView={setView} hasAvailability={slots.length > 0} />}</main>{selectedMatch && <RequestModal key={selectedMatch.user?.id || selectedMatch.id} match={selectedMatch} onClose={() => setSelectedMatch(null)} onSubmit={sendInvite} busy={meetupBusy} />}</div>;
 }

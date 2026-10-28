@@ -64,30 +64,25 @@ test('PostgreSQL email account journey, matching, chat, limits, and persistence'
 
   const runId = randomBytes(5).toString('hex');
   const originalPassword = 'postgres-test-password';
-  const verifiedStudent = async (name, email) => {
+  const emailStudent = async (name, email) => {
     const registered = await request('/api/auth/email/register', {
       method: 'POST', body: { name, email, password: originalPassword },
     });
-    assert.equal(registered.status, 202);
-    assert.equal(registered.cookie, undefined, 'sign-up does not create a session before verification');
-    const message = sentEmails.at(-1);
-    assert.deepEqual(message.to, [email]);
+    assert.equal(registered.status, 201);
+    assert.ok(registered.cookie, 'sign-up immediately creates a session');
+    assert.equal(registered.body.user.emailVerified, false);
+    assert.equal(sentEmails.length, 0, 'joining does not depend on email delivery');
     const unverifiedLogin = await request('/api/auth/email/login', {
       method: 'POST', body: { email, password: originalPassword },
     });
-    assert.equal(unverifiedLogin.status, 403, 'sign-in is blocked until inbox verification');
-    assert.equal(unverifiedLogin.cookie, undefined);
-    const token = /#verify=([A-Za-z0-9_-]{43})/.exec(message.text)?.[1];
-    assert.ok(token, 'verification email includes a link token');
-    const verified = await request('/api/auth/email/verify', { method: 'POST', body: { token } });
-    assert.equal(verified.status, 200);
-    assert.ok(verified.cookie, 'verification starts a session');
-    return { id: verified.body.user.id, cookie: verified.cookie };
+    assert.equal(unverifiedLogin.status, 200, 'correct password signs in before verification');
+    assert.ok(unverifiedLogin.cookie);
+    return { id: registered.body.user.id, cookie: registered.cookie };
   };
 
   const aliceEmail = `alice-${runId}@example.com`;
-  const alice = await verifiedStudent('Alice Test', aliceEmail);
-  const bob = await verifiedStudent('Bob Test', `bob-${runId}@example.com`);
+  const alice = await emailStudent('Alice Test', aliceEmail);
+  const bob = await emailStudent('Bob Test', `bob-${runId}@example.com`);
   const profile = {
     activities: ['Strength training'], locations: ['ARC'],
     experience: 'beginner', bio: 'Looking for a weekday gym buddy.',
@@ -158,6 +153,22 @@ test('PostgreSQL email account journey, matching, chat, limits, and persistence'
   const saved = await db.prepare(`SELECT m.body FROM chat_messages m WHERE m.chat_id = ?
     AND m.body = ?`).get(chatId, 'Want to meet at ARC?');
   assert.equal(saved.body, 'Want to meet at ARC?');
+
+  // Verification is optional for matching and chat, but required for email
+  // password recovery. The verified account keeps its saved profile.
+  const requestedVerification = await request('/api/auth/email/verify/send', {
+    method: 'POST', cookie: alice.cookie, body: {},
+  });
+  assert.equal(requestedVerification.status, 200);
+  const verificationMessage = sentEmails.at(-1);
+  assert.deepEqual(verificationMessage.to, [aliceEmail]);
+  const verificationToken = /#verify=([A-Za-z0-9_-]{43})/.exec(verificationMessage.text)?.[1];
+  assert.ok(verificationToken, 'optional verification email includes a link token');
+  const verified = await request('/api/auth/email/verify', {
+    method: 'POST', body: { token: verificationToken },
+  });
+  assert.equal(verified.status, 200);
+  assert.equal(verified.body.user.emailVerified, true);
 
   // A reset must invalidate the old session and password while preserving the
   // member's saved profile and availability.

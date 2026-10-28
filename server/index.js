@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { createDatabase } from './database.js';
 import { previewImport } from './import.js';
 import { registerSocialRoutes } from './social.js';
-import { emailAuthSettings, initializeEmailAuth, hasVerifiedIdentity, registerEmailRoutes } from './email-auth.js';
+import { emailAuthSettings, initializeEmailAuth, hasEmailIdentity, registerEmailRoutes } from './email-auth.js';
 import {
   ACTIVITIES, LOCATIONS, GENDERS, PARTNER_PREFERENCES, EXPERIENCE_LEVELS,
   InputError, timeToMinutes, normalizeSlots, matchDetails, weekdayForDate, chicagoNow,
@@ -80,8 +80,9 @@ const emailAuthEnabled = Boolean(emailAuthSettings());
 const pilotAuthEnabled = process.env.NODE_ENV !== 'production'
   && !process.env.VERCEL && !process.env.VERCEL_ENV
   && db.kind === 'sqlite' && !emailAuthEnabled;
-// Old pilot and NetID identities do not establish verified email ownership.
-const verifiedIdentityRequired = !pilotAuthEnabled;
+// Public accounts must have an email identity. Inbox verification is optional
+// for using the app, while old pilot and NetID-only sessions remain excluded.
+const emailIdentityRequired = !pilotAuthEnabled;
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 4 * 1024 * 1024, files: 1, fields: 0, parts: 1 },
@@ -141,6 +142,7 @@ function profile(row, own = false) {
   if (own) {
     result.email = row.email;
     result.partnerPreference = row.partner_preference;
+    result.emailVerified = Boolean(row.email_verified_at);
   }
   return result;
 }
@@ -198,12 +200,14 @@ function requireAuth(req, res, next) {
     const token = cookieToken(req);
     if (!token) throw new InputError('Sign in to continue.', 401);
     const session = await db.prepare(`
-      SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
+      SELECT u.*, e.user_id AS email_identity_user_id, e.verified_at AS email_verified_at
+      FROM sessions s JOIN users u ON u.id = s.user_id
+      LEFT JOIN email_identities e ON e.user_id = u.id
       WHERE s.token_hash = ? AND s.expires_at > ?
     `).get(tokenHash(token), Date.now());
     if (!session) throw new InputError('Sign in to continue.', 401);
-    if (verifiedIdentityRequired && !await hasVerifiedIdentity(db, session.id)) {
-      throw new InputError('Sign in with a verified email to continue.', 401);
+    if (emailIdentityRequired && session.email_identity_user_id == null) {
+      throw new InputError('Sign in with an email account to continue.', 401);
     }
     req.user = session;
   })().then(() => next(), next);
@@ -226,8 +230,8 @@ app.use('/api', (req, res, next) => {
 });
 
 initializeEmailAuth(db);
-const trustedUser = async userId => !verifiedIdentityRequired || await hasVerifiedIdentity(db, userId);
-registerSocialRoutes({ app, db, requireAuth, verifiedIdentityRequired, trustedUser });
+const trustedUser = async userId => !emailIdentityRequired || await hasEmailIdentity(db, userId);
+registerSocialRoutes({ app, db, requireAuth, emailIdentityRequired, trustedUser });
 const blockedPair = db.prepare(`SELECT 1 FROM user_blocks
   WHERE (blocker_user_id = ? AND blocked_user_id = ?)
      OR (blocker_user_id = ? AND blocked_user_id = ?) LIMIT 1`);
@@ -236,7 +240,7 @@ async function usersBlocked(firstId, secondId) {
 }
 
 app.post('/api/auth/register', wrap(async (req, res) => {
-  if (!pilotAuthEnabled) throw new InputError('Pilot sign-up is unavailable. Use verified email sign-in.', 403);
+  if (!pilotAuthEnabled) throw new InputError('Pilot sign-up is unavailable. Use email sign-in.', 403);
   if (!hasOnlyKeys(req.body, ['name', 'email', 'password'])) throw new InputError('Enter your name, Illinois email, and password.');
   const name = textField(req.body.name, 'Name', { min: 2, max: 80 });
   const email = textField(req.body.email, 'Email', { min: 1, max: 254 }).toLowerCase();
@@ -268,7 +272,7 @@ app.post('/api/auth/register', wrap(async (req, res) => {
 
 const loginFailures = new Map();
 app.post('/api/auth/login', wrap(async (req, res) => {
-  if (!pilotAuthEnabled) throw new InputError('Pilot sign-in is unavailable. Use verified email sign-in.', 403);
+  if (!pilotAuthEnabled) throw new InputError('Pilot sign-in is unavailable. Use email sign-in.', 403);
   if (!hasOnlyKeys(req.body, ['email', 'password'])) throw new InputError('Enter your email and password.');
   const email = typeof req.body.email === 'string' ? req.body.email.trim().toLowerCase() : '';
   const password = req.body.password;
@@ -296,7 +300,7 @@ app.post('/api/auth/logout', wrap(async (req, res) => {
 }));
 
 app.get('/api/auth/config', (_req, res) => res.json({ emailAuthEnabled, pilotAuthEnabled }));
-registerEmailRoutes({ app, db, createSession, profile, hashPassword, passwordMatches });
+registerEmailRoutes({ app, db, createSession, profile, hashPassword, passwordMatches, requireAuth });
 
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: profile(req.user, true) }));
 
@@ -320,7 +324,8 @@ app.patch('/api/me', requireAuth, wrap(async (req, res) => {
     await db.prepare(`UPDATE users SET name = ?, gender = ?, partner_preference = ?, experience = ?,
       activities = ?, locations = ?, bio = ? WHERE id = ?`)
       .run(name, gender, preference, experience, JSON.stringify(activities), JSON.stringify(locations), bio, current.id);
-    res.json({ user: profile(await db.prepare('SELECT * FROM users WHERE id = ?').get(current.id), true) });
+    const updated = await db.prepare('SELECT * FROM users WHERE id = ?').get(current.id);
+    res.json({ user: profile({ ...updated, email_verified_at: current.email_verified_at }, true) });
 }));
 
 app.get('/api/availability', requireAuth, wrap(async (req, res) => {
@@ -415,7 +420,7 @@ app.post('/api/meetups', requireAuth, wrap(async (req, res) => {
     const candidate = await db.prepare('SELECT * FROM users WHERE id = ?').get(targetId);
     if (!candidate) throw new InputError('This member is no longer available to invite.', 404);
     if (!await trustedUser(targetId)) {
-      throw new InputError('This member must verify their account before receiving invitations.', 403);
+      throw new InputError('This member is unavailable to receive invitations.', 403);
     }
     if (await usersBlocked(req.user.id, targetId)) {
       throw new InputError('You cannot invite this member.', 403);

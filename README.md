@@ -44,6 +44,10 @@ Email and password sign-in is available on the website and in the native iPhone 
 
 New accounts choose a case-insensitive, unique `@username` separate from their full name. A username and email address are reserved as soon as the account is created, including before email verification. Existing accounts receive a starter `member<ID>` username that can be changed in the profile. Full names can repeat; sign-in still uses email.
 
+## Quick tour and Gemini help
+
+After the first sign-in, the app asks whether the person wants a quick tour; choosing **Not now** leaves the app ready to use, and Help can replay the tour later. The tour works without an AI key. Gemini questions use the server-only `GEMINI_API_KEY`, default to `gemini-2.5-flash-lite`, and are limited to 12 per account per hour and 600 characters. Only the typed question and fixed app instructions are sent; chats, schedules, and profile data are not. Questions are not saved. Google’s free-tier quotas and terms may change, and free-tier prompts may be used to improve Google products, so don’t enter passwords, verification codes, or sensitive details. Without a key, the tour remains available and the Help panel explains that AI answers are not configured.
+
 ## What works in this version
 
 - Immediate email registration and sign-in, unique usernames and emails from account creation, optional verification for account recovery, password reset for verified accounts, saved profiles, and optional partner-gender preferences

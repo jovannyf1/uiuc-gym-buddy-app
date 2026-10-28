@@ -162,6 +162,17 @@ final class AppStore: ObservableObject {
         }
     }
 
+    func assistantIsAvailable() async throws -> Bool {
+        let result: AssistantConfigEnvelope = try await api.request("api/assistant/config")
+        return result.available
+    }
+
+    func askAssistant(_ question: String) async throws -> String {
+        let body = try api.encode(AssistantQuestionPayload(question: question))
+        let result: AssistantAnswerEnvelope = try await api.request("api/assistant", method: "POST", body: body)
+        return result.answer
+    }
+
     func registerEmail(name: String, username: String, email: String, password: String) async throws {
         let body = try api.encode(RegisterPayload(
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),

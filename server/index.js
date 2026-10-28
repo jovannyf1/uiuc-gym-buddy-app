@@ -10,6 +10,7 @@ import { createDatabase } from './database.js';
 import { previewImport } from './import.js';
 import { registerSocialRoutes } from './social.js';
 import { emailAuthSettings, initializeEmailAuth, hasEmailIdentity, registerEmailRoutes } from './email-auth.js';
+import { registerAssistantRoutes } from './assistant.js';
 import { normalizeUsername, usernameConflict } from './username.js';
 import {
   ACTIVITIES, LOCATIONS, GENDERS, PARTNER_PREFERENCES, EXPERIENCE_LEVELS,
@@ -310,6 +311,7 @@ app.post('/api/auth/logout', wrap(async (req, res) => {
 
 app.get('/api/auth/config', (_req, res) => res.json({ emailAuthEnabled, pilotAuthEnabled }));
 registerEmailRoutes({ app, db, createSession, profile, hashPassword, passwordMatches, requireAuth });
+registerAssistantRoutes({ app, db, requireAuth });
 
 app.get('/api/me', requireAuth, (req, res) => res.json({ user: profile(req.user, true) }));
 

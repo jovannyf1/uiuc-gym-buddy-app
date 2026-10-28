@@ -491,7 +491,7 @@ export default function App() {
         await api('/api/auth/email/reset/complete', { method: 'POST',
           body: JSON.stringify({ token: values.token, password: values.password }) });
         setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null);
-        setView('home'); setMobileOpen(false); setLinkAction(null);
+        setView('home'); setMobileOpen(false); setLinkAction(null); setNotice(null);
         setAuthMessage('Password changed. Sign in with your new password.');
         return { resetCompleted: true };
       }
@@ -500,6 +500,7 @@ export default function App() {
       const result = await api(`/api/auth/email/${mode}`, { method: 'POST', body: JSON.stringify(payload) });
       const data = result?.user ? result : await api('/api/me');
       setMe(data?.user || data?.me || data);
+      setNotice(null);
       await refreshData();
       setView(mode === 'register' ? 'profile' : 'home');
       return result;
@@ -515,7 +516,7 @@ export default function App() {
     } catch (error) { setNotice({ type: 'error', text: error.message }); }
     finally { setSendingVerification(false); }
   }
-  async function logout() { try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* Clear the local session even if the network fails. */ } setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null); setView('home'); setMobileOpen(false); }
+  async function logout() { try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* Clear the local session even if the network fails. */ } setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null); setNotice(null); setView('home'); setMobileOpen(false); }
   async function saveProfile(values) { const data = await api('/api/me', { method: 'PATCH', body: JSON.stringify(values) }); setMe(data?.user || data?.me || data); const buddyData = await api('/api/matches'); setMatches(buddyData.matches || []); setNotice({ type: 'success', text: 'Your profile is updated.' }); }
   async function saveSlots(next) { const data = await api('/api/availability', { method: 'PUT', body: JSON.stringify({ slots: next }) }); setSlots(data?.slots || next); const buddyData = await api('/api/matches'); setMatches(buddyData.matches || []); setNotice({ type: 'success', text: 'Your available times are saved.' }); }
   async function addImported(next) { await saveSlots(next); setView('availability'); }

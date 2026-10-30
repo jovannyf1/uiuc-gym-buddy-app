@@ -2,6 +2,10 @@
 
 The goal is a real workout plan between two people, not merely a successful build. This record separates evidence from the local code from checks still needed at the address another person will open. The expected results below are proposed acceptance criteria; confirm them with the person using the app before calling the experience finished.
 
+## Public page loading check (October 30, 2026)
+
+Promise: opening `https://uiuc-gym-buddy-app-client.vercel.app/` after an app update shows the sign-up screen, including in a browser that visited an earlier version. Before this fix, the in-app browser showed a blank white page after a normal reload: its HTML pointed at an old JavaScript bundle, and that removed bundle URL returned HTML. Opening the same address with `?reload=20261030` showed the current sign-up screen. The cache fix prevents storing the home page in the service worker, asks Vercel not to cache HTML or the service worker, and returns 404 for missing asset files. Local checks passed (27 tests, 0 failed, 1 PostgreSQL test skipped; web build passed). **The exact normal public URL must be rechecked after deployment**, along with a browser that held the stale version.
+
 ## Current evidence (October 28, 2026)
 
 | Promise a person can check | Evidence in this repository | Status |

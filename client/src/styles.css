@@ -60,3 +60,9 @@
 .email-verification-banner .button{flex:none;min-height:39px;padding:8px 13px;font-size:12px;text-align:center}
 @media(max-width:760px){.email-verification-banner{align-items:stretch;flex-direction:column;margin:15px 20px 0}.email-verification-banner .button{align-self:flex-start}}
 @media(max-width:560px){.email-verification-banner{margin:13px 15px 0}.email-verification-banner .button{align-self:stretch}}
+/* Keep the in-app back control visible beside the current section on narrow screens. */
+.topbar-back{min-height:36px;padding:7px 10px;gap:7px;border-radius:9px;font-size:12px;white-space:nowrap;margin-right:12px;flex:none}
+.topbar-back:not(:disabled):hover{transform:none}
+@media(max-width:760px){.topbar-back{margin-right:8px}}
+@media(max-width:560px){.topbar[data-has-back="true"] .topbar-context{display:none}}
+@media(max-width:760px){.sidebar:not(.sidebar-open){box-shadow:none}}

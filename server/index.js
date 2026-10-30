@@ -551,6 +551,9 @@ app.use('/api', (req, res) => res.status(404).json({ error: 'API endpoint not fo
 const clientDist = path.join(projectDir, 'client', 'dist');
 if (existsSync(clientDist)) {
   app.use(express.static(clientDist, { index: false }));
+  // A stale page can request a hashed file removed by a newer deployment.
+  // Do not return index.html for that URL: browsers refuse to execute HTML as JS.
+  app.get('/assets/*', (req, res) => res.status(404).type('text/plain').send('App file not found. Reload the page.'));
   app.get('*', (req, res) => res.sendFile(path.join(clientDist, 'index.html')));
 }
 

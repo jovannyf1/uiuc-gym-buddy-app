@@ -23,7 +23,7 @@ process.env.RESEND_API_KEY = 'test-resend-key';
 process.env.EMAIL_FROM = 'Gym Buddy <hello@example.com>';
 process.env.PUBLIC_APP_URL = 'https://gym-buddy.example.com/';
 process.env.GEMINI_API_KEY = '';
-process.env.GEMINI_MODEL = 'gemini-2.5-flash-lite';
+process.env.GEMINI_MODEL = '';
 const dataDir = mkdtempSync(path.join(tmpdir(), 'gym-buddy-assistant-'));
 process.env.DATA_DIR = dataDir;
 const { app, db } = await import('./index.js');
@@ -78,11 +78,12 @@ test('assistant requires sign-in, keeps its guide available without Gemini, and 
   assert.equal(geminiRequests.length, 1);
   const sent = geminiRequests[0];
   assert.equal(sent.init.headers['x-goog-api-key'], 'test-gemini-key');
+  assert.equal(new URL(sent.url).pathname, '/v1beta/models/gemini-3.5-flash-lite:generateContent');
   assert.equal(new URL(sent.url).search, '', 'the API key is not placed in the URL');
   const payload = JSON.parse(sent.init.body);
   assert.equal(payload.contents.length, 1);
   assert.equal(payload.contents[0].parts[0].text, 'How do I add free times?');
-  assert.equal(payload.generationConfig.maxOutputTokens, 384);
+  assert.deepEqual(payload.generationConfig, { maxOutputTokens: 512 });
   assert.match(payload.systemInstruction.parts[0].text, /NetID and live Outlook sync are not available/);
   assert.doesNotMatch(JSON.stringify(payload), /helper@example\.org|assistant-test-password/);
 

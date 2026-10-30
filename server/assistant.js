@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { InputError } from './core.js';
 
-const DEFAULT_MODEL = 'gemini-2.5-flash-lite';
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 const QUESTION_LIMIT = 600;
 const ANSWER_LIMIT = 2_000;
 const QUESTIONS_PER_HOUR = 12;
@@ -14,7 +14,7 @@ Answer general workout questions if helpful, but never invent the user's schedul
 function modelName() {
   const configured = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
   if (!/^[a-z0-9][a-z0-9.-]{1,79}$/i.test(configured)) {
-    throw new Error('GEMINI_MODEL must be a model name, such as gemini-2.5-flash-lite.');
+    throw new Error('GEMINI_MODEL must be a model name, such as gemini-3.5-flash-lite.');
   }
   return configured;
 }
@@ -63,7 +63,10 @@ export function registerAssistantRoutes({ app, db, requireAuth, fetchImpl = (...
         body: JSON.stringify({
           systemInstruction: { parts: [{ text: APP_GUIDE }] },
           contents: [{ role: 'user', parts: [{ text: question }] }],
-          generationConfig: { temperature: 0.3, maxOutputTokens: 384, thinkingConfig: { thinkingBudget: 0 } },
+          // Gemini 3.5 Flash-Lite defaults to minimal thinking. Avoid the
+          // Gemini 2.5 thinkingBudget and sampling settings, which are not
+          // supported by current Gemini 3 models.
+          generationConfig: { maxOutputTokens: 512 },
         }),
         signal: AbortSignal.timeout(12_000),
       });

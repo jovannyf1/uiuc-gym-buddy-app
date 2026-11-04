@@ -8,6 +8,10 @@ struct BuddiesView: View {
     @State private var selectedMatch: BuddyMatch?
     @State private var activeChat: ChatSummary?
     @State private var openingChat = false
+    @State private var nearbyLoaded = false
+    @State private var nearbyLoadFailed = false
+    @State private var ownPresenceLoaded = false
+    @State private var ownPresenceLoadFailed = false
 
     var body: some View {
         List {
@@ -18,13 +22,20 @@ struct BuddiesView: View {
             }
 
             Section("Working out now") {
-                if let presence = store.presence {
+                if !ownPresenceLoaded {
+                    ProgressView("Checking your workout status…")
+                } else if ownPresenceLoadFailed {
+                    Label("Could not check your workout status. Pull down to retry.", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                } else if let presence = store.presence {
                     LabeledContent("Your status", value: "\(presence.activity) at \(presence.location)")
-                    Text("Visible to compatible buddies until \(presence.expiresAt.formattedTimestamp)")
+                    Text("Status active until \(presence.expiresAt.formattedTimestamp)")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     AsyncActionButton {
                         try await store.stopPresence()
+                        ownPresenceLoaded = true
+                        ownPresenceLoadFailed = false
                     } label: {
                         Label("Stop sharing workout status", systemImage: "stop.circle")
                     }
@@ -42,6 +53,8 @@ struct BuddiesView: View {
                     }
                     AsyncActionButton {
                         try await store.startPresence(activity: activity, location: location, durationMinutes: duration)
+                        ownPresenceLoaded = true
+                        ownPresenceLoadFailed = false
                     } label: {
                         Label("I'm working out now", systemImage: "figure.run")
                     }
@@ -50,8 +63,13 @@ struct BuddiesView: View {
                         .foregroundStyle(.secondary)
                 }
 
-                if store.nearby.isEmpty {
-                    Text("No compatible buddies are sharing a workout status right now.")
+                if !nearbyLoaded {
+                    ProgressView("Checking active workouts…")
+                } else if nearbyLoadFailed {
+                    Label("Could not load active workouts. Pull down to retry.", systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                } else if store.nearby.isEmpty {
+                    Text("No compatible buddies are sharing right now. You will only see people with a shared workout, gym, and matching partner preferences.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                 } else {
@@ -116,10 +134,9 @@ struct BuddiesView: View {
         .navigationTitle("Find a buddy")
         .overlay { if openingChat { ProgressView().controlSize(.large) } }
         .refreshable {
-            do {
-                try await store.refreshMatches()
-                try await store.refreshNearby()
-            } catch { store.errorMessage = error.localizedDescription }
+            do { try await store.refreshMatches() }
+            catch { store.errorMessage = error.localizedDescription }
+            await refreshWorkoutStatuses()
         }
         .task {
             if let me = store.currentUser {
@@ -127,7 +144,7 @@ struct BuddiesView: View {
                 location = me.locations.first ?? GymData.locations[0]
             }
             while !Task.isCancelled {
-                try? await store.refreshSocial()
+                await refreshWorkoutStatuses()
                 try? await Task.sleep(for: .seconds(30))
             }
         }
@@ -144,6 +161,25 @@ struct BuddiesView: View {
             catch { store.errorMessage = error.localizedDescription }
             openingChat = false
         }
+    }
+
+    private func refreshWorkoutStatuses() async {
+        // A chat outage must not prevent either workout-status request.
+        do {
+            try await store.refreshNearby()
+            nearbyLoadFailed = false
+        } catch {
+            nearbyLoadFailed = true
+        }
+        nearbyLoaded = true
+
+        do {
+            try await store.refreshOwnPresence()
+            ownPresenceLoadFailed = false
+        } catch {
+            ownPresenceLoadFailed = true
+        }
+        ownPresenceLoaded = true
     }
 }
 

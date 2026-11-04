@@ -22,6 +22,7 @@ export function postgresSql(sql) {
 
 class SQLiteDatabase {
   kind = 'sqlite';
+  #transactionTail = Promise.resolve();
 
   constructor(filename) {
     this.raw = new DatabaseSync(filename);
@@ -36,14 +37,24 @@ class SQLiteDatabase {
   }
 
   async transaction(work) {
-    this.raw.exec('BEGIN IMMEDIATE');
+    // SQLite uses one connection here. Awaited work can yield to another
+    // request, so serialize transactions before opening BEGIN IMMEDIATE.
+    let release;
+    const previous = this.#transactionTail;
+    this.#transactionTail = new Promise(resolve => { release = resolve; });
+    await previous;
     try {
-      const result = await work();
-      this.raw.exec('COMMIT');
-      return result;
-    } catch (error) {
-      this.raw.exec('ROLLBACK');
-      throw error;
+      this.raw.exec('BEGIN IMMEDIATE');
+      try {
+        const result = await work();
+        this.raw.exec('COMMIT');
+        return result;
+      } catch (error) {
+        this.raw.exec('ROLLBACK');
+        throw error;
+      }
+    } finally {
+      release();
     }
   }
 

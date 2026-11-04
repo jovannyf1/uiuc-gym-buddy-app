@@ -55,6 +55,34 @@ test('presence is opt-in, expires, and reveals only compatible students at a cho
   assert.equal((await fetch(`${base}/api/presence/nearby`)).status, 401);
   assert.deepEqual((await request(alice, '/api/presence/me')).body, { presence: null });
   assert.deepEqual((await request(alice, '/api/presence/nearby')).body, { people: [] });
+  const switchedTabWrite = await fetch(`${base}/api/presence`, {
+    method: 'PUT',
+    headers: {
+      cookie: bob.cookie,
+      'content-type': 'application/json',
+      'x-client-user-id': String(alice.id),
+    },
+    body: JSON.stringify({ activity: 'Strength training', location: 'ARC' }),
+  });
+  assert.equal(switchedTabWrite.status, 409);
+  assert.deepEqual((await request(bob, '/api/presence/me')).body, { presence: null });
+  const switchedTabRead = await fetch(`${base}/api/presence/me`, {
+    headers: { cookie: bob.cookie, 'x-client-user-id': String(alice.id) },
+  });
+  assert.equal(switchedTabRead.status, 409);
+  const switchedTabProfile = await fetch(`${base}/api/me`, {
+    method: 'PATCH',
+    headers: { cookie: bob.cookie, 'content-type': 'application/json', 'x-client-user-id': String(alice.id) },
+    body: JSON.stringify({ bio: 'This must not be saved on the other account.' }),
+  });
+  assert.equal(switchedTabProfile.status, 409);
+  assert.equal((await request(bob, '/api/me')).body.user.bio, '');
+  const switchedTabLogout = await fetch(`${base}/api/auth/logout`, {
+    method: 'POST',
+    headers: { cookie: bob.cookie, 'x-client-user-id': String(alice.id) },
+  });
+  assert.equal(switchedTabLogout.status, 409);
+  assert.equal((await request(bob, '/api/presence/me')).status, 200);
   assert.equal((await request(bob, '/api/presence', {
     method: 'PUT', body: { activity: 'Strength training', location: 'ARC', durationMinutes: 60 },
   })).status, 200);

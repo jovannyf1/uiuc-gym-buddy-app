@@ -219,6 +219,12 @@ function requireAuth(req, res, next) {
     if (emailIdentityRequired && session.email_identity_user_id == null) {
       throw new InputError('Sign in with an email account to continue.', 401);
     }
+    // A second tab can replace the shared cookie while the first still shows
+    // the previous account. Guard browser writes from acting on that new user.
+    const displayedUserId = req.get('x-client-user-id');
+    if (displayedUserId && displayedUserId !== String(session.id)) {
+      throw new InputError('This tab is signed in as another account. Reload before changing anything.', 409);
+    }
     req.user = session;
   })().then(() => next(), next);
 }
@@ -304,6 +310,13 @@ app.post('/api/auth/login', wrap(async (req, res) => {
 
 app.post('/api/auth/logout', wrap(async (req, res) => {
   const token = cookieToken(req);
+  const displayedUserId = req.get('x-client-user-id');
+  if (token && displayedUserId) {
+    const session = await db.prepare('SELECT user_id FROM sessions WHERE token_hash = ?').get(tokenHash(token));
+    if (session && displayedUserId !== String(session.user_id)) {
+      throw new InputError('This tab is signed in as another account. Reload before changing anything.', 409);
+    }
+  }
   if (token) await db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash(token));
   res.clearCookie(SESSION_COOKIE, sessionCookieOptions(req));
   res.json({ ok: true });
@@ -413,6 +426,21 @@ const meetupSelect = `SELECT m.*, sender.name AS from_name, recipient.name AS to
   FROM meetups m JOIN users sender ON sender.id = m.from_user_id
   JOIN users recipient ON recipient.id = m.to_user_id`;
 
+// A read-then-write conflict check is unsafe when two invitations arrive at
+// once. Lock both members in a stable order, including across Vercel instances.
+async function withMeetupLocks(userIds, work) {
+  if (db.kind === 'postgres') {
+    return db.transaction(async () => {
+      const lock = db.prepare('SELECT pg_advisory_xact_lock(?::bigint)');
+      for (const id of [...new Set(userIds)].sort((a, b) => a - b)) {
+        await lock.get(7_123_400_000_000 + id);
+      }
+      return work();
+    });
+  }
+  return db.transaction(work);
+}
+
 app.get('/api/meetups', requireAuth, wrap(async (req, res) => {
   const rows = await db.prepare(`${meetupSelect} WHERE m.from_user_id = ? OR m.to_user_id = ?
     ORDER BY m.date, m.start, m.created_at`).all(req.user.id, req.user.id);
@@ -472,26 +500,28 @@ app.post('/api/meetups', requireAuth, wrap(async (req, res) => {
         && start >= timeToMinutes(slot.start) && end <= timeToMinutes(slot.end))) {
       throw new InputError('This workout is outside your shared activities, places, or available times.');
     }
-    if (await conflicts(req.user.id, date, req.body.start, req.body.end)
-      || await conflicts(candidate.id, date, req.body.start, req.body.end)) {
-      throw new InputError('One of you already has a workout planned for that time.', 409);
-    }
-    const nowMs = Date.now();
-    const since = new Date(nowMs - DAY_MS).toISOString();
-    const sentToday = (await db.prepare('SELECT COUNT(*) AS total FROM meetups WHERE from_user_id = ? AND created_at >= ?')
-      .get(req.user.id, since)).total;
-    const sentToStudentToday = (await db.prepare(`SELECT COUNT(*) AS total FROM meetups
-      WHERE from_user_id = ? AND to_user_id = ? AND created_at >= ?`)
-      .get(req.user.id, targetId, since)).total;
-    if (sentToday >= MAX_MEETUPS_PER_DAY || sentToStudentToday >= MAX_MEETUPS_TO_ONE_STUDENT_PER_DAY) {
-      throw new InputError('You have sent the daily limit of workout invitations. Try again tomorrow.', 429);
-    }
-    const createdAt = new Date(nowMs).toISOString();
-    const result = await db.prepare(`INSERT INTO meetups
-      (from_user_id, to_user_id, activity, date, day, start, "end", location, note, status, created_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
-      .run(req.user.id, targetId, activity, date, weekday, req.body.start, req.body.end, location, note, createdAt);
-    const row = await db.prepare(`${meetupSelect} WHERE m.id = ?`).get(result.lastInsertRowid);
+    const row = await withMeetupLocks([req.user.id, targetId], async () => {
+      if (await conflicts(req.user.id, date, req.body.start, req.body.end)
+        || await conflicts(candidate.id, date, req.body.start, req.body.end)) {
+        throw new InputError('One of you already has a workout planned for that time.', 409);
+      }
+      const nowMs = Date.now();
+      const since = new Date(nowMs - DAY_MS).toISOString();
+      const sentToday = (await db.prepare('SELECT COUNT(*) AS total FROM meetups WHERE from_user_id = ? AND created_at >= ?')
+        .get(req.user.id, since)).total;
+      const sentToStudentToday = (await db.prepare(`SELECT COUNT(*) AS total FROM meetups
+        WHERE from_user_id = ? AND to_user_id = ? AND created_at >= ?`)
+        .get(req.user.id, targetId, since)).total;
+      if (sentToday >= MAX_MEETUPS_PER_DAY || sentToStudentToday >= MAX_MEETUPS_TO_ONE_STUDENT_PER_DAY) {
+        throw new InputError('You have sent the daily limit of workout invitations. Try again tomorrow.', 429);
+      }
+      const createdAt = new Date(nowMs).toISOString();
+      const result = await db.prepare(`INSERT INTO meetups
+        (from_user_id, to_user_id, activity, date, day, start, "end", location, note, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)`)
+        .run(req.user.id, targetId, activity, date, weekday, req.body.start, req.body.end, location, note, createdAt);
+      return db.prepare(`${meetupSelect} WHERE m.id = ?`).get(result.lastInsertRowid);
+    });
     res.status(201).json({ meetup: meetupFor(row) });
 }));
 
@@ -501,30 +531,34 @@ app.patch('/api/meetups/:id', requireAuth, wrap(async (req, res) => {
       throw new InputError('Choose a valid meetup and response.');
     }
     const status = enumField(req.body.status, ['accepted', 'declined', 'cancelled'], 'response');
-    const row = await db.prepare('SELECT * FROM meetups WHERE id = ?').get(id);
-    if (!row || (row.from_user_id !== req.user.id && row.to_user_id !== req.user.id)) {
+    const existing = await db.prepare('SELECT * FROM meetups WHERE id = ?').get(id);
+    if (!existing || (existing.from_user_id !== req.user.id && existing.to_user_id !== req.user.id)) {
       throw new InputError('Meetup not found.', 404);
     }
-    if (!await trustedUser(row.from_user_id) || !await trustedUser(row.to_user_id)) {
-      throw new InputError('Meetup not found.', 404);
-    }
-    if (status === 'accepted' || status === 'declined') {
-      if (req.user.id !== row.to_user_id || row.status !== 'pending') {
-        throw new InputError('Only the invited member can accept or decline a pending invitation.', 403);
+    const row = await withMeetupLocks([existing.from_user_id, existing.to_user_id], async () => {
+      const current = await db.prepare('SELECT * FROM meetups WHERE id = ?').get(id);
+      if (!current || !await trustedUser(current.from_user_id) || !await trustedUser(current.to_user_id)) {
+        throw new InputError('Meetup not found.', 404);
       }
-      if (status === 'accepted') {
-        // Another accepted workout can appear after the invitation was sent.
-        const acceptedConflict = await db.prepare(`SELECT 1 FROM meetups WHERE id != ? AND date = ?
-          AND status = 'accepted' AND start < ? AND "end" > ?
-          AND (from_user_id IN (?, ?) OR to_user_id IN (?, ?)) LIMIT 1`)
-          .get(id, row.date, row.end, row.start, row.from_user_id, row.to_user_id, row.from_user_id, row.to_user_id);
-        if (acceptedConflict) throw new InputError('One of you already has a confirmed workout at that time.', 409);
+      if (status === 'accepted' || status === 'declined') {
+        if (req.user.id !== current.to_user_id || current.status !== 'pending') {
+          throw new InputError('Only the invited member can accept or decline a pending invitation.', 403);
+        }
+        if (status === 'accepted') {
+          // Another accepted workout can appear after the invitation was sent.
+          const acceptedConflict = await db.prepare(`SELECT 1 FROM meetups WHERE id != ? AND date = ?
+            AND status = 'accepted' AND start < ? AND "end" > ?
+            AND (from_user_id IN (?, ?) OR to_user_id IN (?, ?)) LIMIT 1`)
+            .get(id, current.date, current.end, current.start, current.from_user_id, current.to_user_id, current.from_user_id, current.to_user_id);
+          if (acceptedConflict) throw new InputError('One of you already has a confirmed workout at that time.', 409);
+        }
+      } else if (!['pending', 'accepted'].includes(current.status)) {
+        throw new InputError('This meetup can no longer be cancelled.', 409);
       }
-    } else if (!['pending', 'accepted'].includes(row.status)) {
-      throw new InputError('This meetup can no longer be cancelled.', 409);
-    }
-    await db.prepare('UPDATE meetups SET status = ? WHERE id = ?').run(status, id);
-    res.json({ meetup: meetupFor(await db.prepare(`${meetupSelect} WHERE m.id = ?`).get(id)) });
+      await db.prepare('UPDATE meetups SET status = ? WHERE id = ?').run(status, id);
+      return db.prepare(`${meetupSelect} WHERE m.id = ?`).get(id);
+    });
+    res.json({ meetup: meetupFor(row) });
 }));
 
 const imagePreviewAttempts = new Map();

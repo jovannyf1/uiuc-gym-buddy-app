@@ -8,8 +8,18 @@ const QUESTIONS_PER_HOUR = 12;
 const HOUR_MS = 60 * 60 * 1_000;
 
 const APP_GUIDE = `You are Buddy Help inside UIUC Gym Buddy App. Be warm, brief, and practical.
-Explain how this app works when asked: members edit a profile and choose activities and ARC or CRCE; they add weekly free times manually or import an .ics calendar export. A schedule screenshot can suggest free times only if the separate screenshot AI service is configured. Imported times must be reviewed before saving. Find a buddy shows compatible people with overlapping free times, activities, and gyms. Members can chat, invite someone to a dated workout, and accept, decline, or cancel invitations. Working out now is opt-in and expires. Members can block and report others. Email verification is optional to use the app but required for password reset. Email and username are unique; sign-in uses email. NetID and live Outlook sync are not available.
+Explain how this app works when asked: members edit a profile and choose activities and ARC or CRCE; they add weekly free times manually or import an .ics calendar export. A schedule screenshot can suggest free times only if the separate screenshot AI service is configured. Imported times must be reviewed before saving. Find a buddy shows compatible people with overlapping free times, activities, and gyms. Members can chat, invite someone to a dated workout, and accept, decline, or cancel invitations. For Working out now, use the Working out now navigation item. If sharing is unavailable, open My profile, choose at least one activity and meeting place, and save the profile. Return to Working out now, choose an activity, gym, and duration, then press “I’m open to a workout now.” To stop, press “Stop sharing now.” There is no status toggle in My profile. Status is opt-in, visible only to compatible people, and expires automatically. Members can block and report others. Email verification is optional to use the app but required for password reset. Email and username are unique; sign-in uses email. NetID and live Outlook sync are not available.
 Answer general workout questions if helpful, but never invent the user's schedule, matches, messages, gym crowd, campus hours, or current app state. You cannot view or change their account or send messages. For current campus facts, suggest checking an official UIUC source. Do not diagnose injuries or prescribe medical treatment. If asked for help using the app, give a concrete next tap or step. Do not ask for passwords, verification links, or private schedule details.`;
+
+const WORKING_OUT_NOW_ANSWER = 'Open Working out now from the app navigation. If it asks you to update your profile, open My profile, choose at least one activity and one meeting place (ARC or CRCE), and tap Save profile. Return to Working out now, choose an activity, gym, and duration, then tap “I’m open to a workout now.” Your status appears with a Stop sharing now button and expires automatically. Others see it only when the activity and gym match and both partner preferences allow the pairing.';
+
+function knownAppAnswer(question) {
+  const normalized = question.toLowerCase().replace(/[-_]+/g, ' ');
+  if (/\bworking out now\b|\bworkout status\b|\bshare (?:a )?workout status\b/.test(normalized)) {
+    return WORKING_OUT_NOW_ANSWER;
+  }
+  return null;
+}
 
 function modelName() {
   const configured = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
@@ -53,6 +63,11 @@ export function registerAssistantRoutes({ app, db, requireAuth, fetchImpl = (...
       throw new InputError(`Use a question of 1–${QUESTION_LIMIT} characters.`);
     }
     await useQuestionAllowance(db, req.user.id);
+
+    // Give exact, stable steps for this app flow rather than letting the model
+    // invent controls that do not exist in the current interface.
+    const appAnswer = knownAppAnswer(question);
+    if (appAnswer) return res.json({ answer: appAnswer });
 
     const model = modelName();
     let response;

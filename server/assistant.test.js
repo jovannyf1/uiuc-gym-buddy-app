@@ -72,6 +72,19 @@ test('assistant requires sign-in, keeps its guide available without Gemini, and 
   assert.equal((await request('/api/assistant', { cookie, body: { question: 'x'.repeat(601) } })).status, 400);
   assert.equal((await request('/api/assistant', { cookie, body: { question: 'help', profile: 'private' } })).status, 400);
 
+  const beforeKnownAppAnswer = geminiRequests.length;
+  const presenceHelp = await request('/api/assistant', {
+    cookie, body: { question: 'How do I start a Working out now post?' },
+  });
+  assert.equal(presenceHelp.status, 200);
+  assert.match(presenceHelp.body.answer, /Open Working out now from the app navigation/);
+  assert.match(presenceHelp.body.answer, /choose at least one activity and one meeting place/);
+  assert.match(presenceHelp.body.answer, /tap “I’m open to a workout now\.”/);
+  assert.match(presenceHelp.body.answer, /both partner preferences allow the pairing/);
+  assert.doesNotMatch(presenceHelp.body.answer, /toggle|status menu/i);
+  assert.equal(geminiRequests.length, beforeKnownAppAnswer,
+    'exact app directions do not depend on Gemini inventing current controls');
+
   const answer = await request('/api/assistant', { cookie, body: { question: 'How do I add free times?' } });
   assert.equal(answer.status, 200);
   assert.deepEqual(answer.body, { answer: 'Tap My availability, then choose Add time.' });

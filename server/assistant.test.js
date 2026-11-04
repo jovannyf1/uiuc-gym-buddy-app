@@ -77,6 +77,7 @@ test('assistant requires sign-in, keeps its guide available without Gemini, and 
     cookie, body: { question: 'How do I start a Working out now post?' },
   });
   assert.equal(presenceHelp.status, 200);
+  assert.equal(presenceHelp.body.source, 'app-guide');
   assert.match(presenceHelp.body.answer, /Open Working out now from the app navigation/);
   assert.match(presenceHelp.body.answer, /choose at least one activity and one meeting place/);
   assert.match(presenceHelp.body.answer, /tap “I’m open to a workout now\.”/);
@@ -87,7 +88,7 @@ test('assistant requires sign-in, keeps its guide available without Gemini, and 
 
   const answer = await request('/api/assistant', { cookie, body: { question: 'How do I add free times?' } });
   assert.equal(answer.status, 200);
-  assert.deepEqual(answer.body, { answer: 'Tap My availability, then choose Add time.' });
+  assert.deepEqual(answer.body, { answer: 'Tap My availability, then choose Add time.', source: 'gemini' });
   assert.equal(geminiRequests.length, 1);
   const sent = geminiRequests[0];
   assert.equal(sent.init.headers['x-goog-api-key'], 'test-gemini-key');

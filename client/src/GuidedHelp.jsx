@@ -69,6 +69,7 @@ export default function GuidedHelp({ open, onClose, onNavigate, userId, view, he
   const [assistantState, setAssistantState] = useState('checking');
   const [question, setQuestion] = useState('');
   const [answer, setAnswer] = useState('');
+  const [answerSource, setAnswerSource] = useState('');
   const [answeredQuestion, setAnsweredQuestion] = useState('');
   const [error, setError] = useState('');
   const [sending, setSending] = useState(false);
@@ -88,6 +89,7 @@ export default function GuidedHelp({ open, onClose, onNavigate, userId, view, he
     setTab('tour');
     setQuestion('');
     setAnswer('');
+    setAnswerSource('');
     setAnsweredQuestion('');
     setError('');
     setAssistantState('checking');
@@ -168,6 +170,7 @@ export default function GuidedHelp({ open, onClose, onNavigate, userId, view, he
     setSending(true);
     setError('');
     setAnswer('');
+    setAnswerSource('');
     setAnsweredQuestion(clean);
     try {
       const response = await fetch('/api/assistant', {
@@ -179,6 +182,7 @@ export default function GuidedHelp({ open, onClose, onNavigate, userId, view, he
       const data = await response.json().catch(() => ({}));
       if (!response.ok) throw new Error(data?.error || 'Gemini could not answer just now. Try again later.');
       setAnswer(data?.answer || 'Gemini returned an empty answer. Try asking another way.');
+      setAnswerSource(data?.source === 'app-guide' ? 'app-guide' : 'gemini');
     } catch (requestError) {
       setError(requestError.message || 'Could not reach Gemini. Check your connection and try again.');
       setAnsweredQuestion('');
@@ -233,17 +237,17 @@ export default function GuidedHelp({ open, onClose, onNavigate, userId, view, he
           </div>
         </> : <div className="help-tour-complete"><div className="help-step-count">TOUR COMPLETE</div><h3>You’re ready to find a workout buddy.</h3><p>You can return to any section whenever you like.</p><div><button type="button" className="button button-primary" onClick={restartTour}>Restart tour</button><button type="button" className="button button-subtle" onClick={close}>Close</button></div></div>}
       </div> : <div id="help-ask-panel" role="tabpanel" aria-labelledby="help-ask-tab" className="help-ask-panel">
-        <p className="help-privacy-note">Ask about using the app or general workout planning. Your typed question is sent to Google Gemini. The assistant does not receive your profile, schedule, or chats. Don’t include passwords or sensitive details. Questions are not saved.</p>
+        <p className="help-privacy-note">Questions about Working out now use a built-in answer; other questions are sent to Google Gemini. The assistant does not receive your profile, schedule, or chats. Don’t include passwords or sensitive details. Questions are not saved.</p>
         {assistantState === 'checking' ? <p className="help-ai-status" role="status">Checking whether Gemini is available…</p>
           : assistantState === 'unavailable' ? <div className="help-ai-unavailable" role="status"><strong>Gemini isn’t set up yet.</strong><span>The tour works now. AI questions will be available after the app owner configures the Gemini service.</span></div>
             : <form className="help-ask-form" onSubmit={ask}>
               <label htmlFor="help-question">Your question</label>
               <textarea id="help-question" value={question} onChange={event => setQuestion(event.target.value)} maxLength={600} rows={3} placeholder="How do I find someone with the same free time?" required />
-              <button className="button button-primary" type="submit" disabled={sending || !question.trim()}>{sending ? 'Asking Gemini…' : 'Ask Gemini'}</button>
+              <button className="button button-primary" type="submit" disabled={sending || !question.trim()}>{sending ? 'Getting an answer…' : 'Get an answer'}</button>
             </form>}
         {error && <p className="inline-error" role="alert">{error}</p>}
         {sending && <p className="help-ai-status" role="status">Thinking…</p>}
-        {answeredQuestion && <div className="help-answer" aria-live="polite"><p><strong>You asked:</strong> {answeredQuestion}</p>{answer ? <p><strong>Gemini:</strong> {answer}</p> : <p>Waiting for an answer…</p>}</div>}
+        {answeredQuestion && <div className="help-answer" aria-live="polite"><p><strong>You asked:</strong> {answeredQuestion}</p>{answer ? <p><strong>{answerSource === 'app-guide' ? 'App guide' : 'Gemini'}:</strong> {answer}</p> : <p>Waiting for an answer…</p>}</div>}
         <p className="help-ai-footnote">Gemini can be wrong. For health concerns, ask a qualified professional.</p>
       </div>}
     </section>

@@ -67,7 +67,7 @@ export function registerAssistantRoutes({ app, db, requireAuth, fetchImpl = (...
     // Give exact, stable steps for this app flow rather than letting the model
     // invent controls that do not exist in the current interface.
     const appAnswer = knownAppAnswer(question);
-    if (appAnswer) return res.json({ answer: appAnswer });
+    if (appAnswer) return res.json({ answer: appAnswer, source: 'app-guide' });
 
     const model = modelName();
     let response;
@@ -101,6 +101,6 @@ export function registerAssistantRoutes({ app, db, requireAuth, fetchImpl = (...
     const answer = result?.candidates?.[0]?.content?.parts
       ?.map(part => typeof part.text === 'string' ? part.text : '').join('').trim();
     if (!answer) throw new InputError('AI could not answer that question. Please try rephrasing it.', 503);
-    res.json({ answer: answer.slice(0, ANSWER_LIMIT) });
+    res.json({ answer: answer.slice(0, ANSWER_LIMIT), source: 'gemini' });
   }));
 }

@@ -196,7 +196,14 @@ final class AppStore: ObservableObject {
         ))
         let result: UserEnvelope = try await api.request("api/auth/email/login", method: "POST", body: body)
         currentUser = result.user
-        try await refreshAll()
+        do {
+            try await refreshAll()
+        } catch let error as APIError where error.statusCode == 401 {
+            currentUser = nil
+            throw error
+        } catch {
+            errorMessage = "You're signed in, but some information could not load. Try again in a moment."
+        }
     }
 
     func resendEmailVerification(email: String) async throws -> String {
@@ -293,32 +300,39 @@ final class AppStore: ObservableObject {
     }
 
     func refreshSocial() async throws {
-        let chatsResult: ChatsEnvelope = try await api.request("api/chats")
-        let nearbyResult: NearbyEnvelope = try await api.request("api/presence/nearby")
-        let presenceResult: PresenceEnvelope = try await api.request("api/presence/me")
-        let blocksResult: BlocksEnvelope = try await api.request("api/blocks")
-        chats = chatsResult.chats
-        nearby = nearbyResult.people
-        presence = presenceResult.presence
-        blockedUsers = blocksResult.blockedUsers
+        // Each section can still load when an unrelated social endpoint fails.
+        var errors: [Error] = []
+        do { try await refreshNearby() } catch { errors.append(error) }
+        do { try await refreshOwnPresence() } catch { errors.append(error) }
+        do { try await refreshChats() } catch { errors.append(error) }
+        do { try await refreshBlocks() } catch { errors.append(error) }
+        if let firstError = errors.first { throw firstError }
     }
 
     func startPresence(activity: String, location: String, durationMinutes: Int) async throws {
         let body = try api.encode(PresencePayload(activity: activity, location: location, durationMinutes: durationMinutes))
         let result: PresenceEnvelope = try await api.request("api/presence", method: "PUT", body: body)
         presence = result.presence
-        try await refreshNearby()
     }
 
     func stopPresence() async throws {
         let _: OKEnvelope = try await api.request("api/presence", method: "DELETE")
         presence = nil
-        try await refreshNearby()
     }
 
     func refreshNearby() async throws {
         let result: NearbyEnvelope = try await api.request("api/presence/nearby")
         nearby = result.people
+    }
+
+    func refreshOwnPresence() async throws {
+        let result: PresenceEnvelope = try await api.request("api/presence/me")
+        presence = result.presence
+    }
+
+    func refreshBlocks() async throws {
+        let result: BlocksEnvelope = try await api.request("api/blocks")
+        blockedUsers = result.blockedUsers
     }
 
     func createChat(with userID: Int) async throws -> ChatSummary {
@@ -354,8 +368,7 @@ final class AppStore: ObservableObject {
 
     func unblockUser(_ id: Int) async throws {
         let _: BlockEnvelope = try await api.request("api/users/\(id)/block", method: "DELETE")
-        let result: BlocksEnvelope = try await api.request("api/blocks")
-        blockedUsers = result.blockedUsers
+        try await refreshBlocks()
     }
 
     func reportUser(_ id: Int, reason: String, details: String) async throws {

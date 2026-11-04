@@ -6,6 +6,8 @@ const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 const SHORT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 const ACTIVITIES = ['Strength training', 'Cardio', 'General workout', 'Group fitness', 'Stretching & mobility'];
 const LOCATIONS = ['ARC', 'CRCE'];
+const TAB_USER_KEY = 'uiuc-gym-buddy-tab-user';
+const ACCOUNT_SWITCH_NOTICE_KEY = 'uiuc-gym-buddy-account-switch';
 const NAV = [
   { id: 'home', label: 'Overview', icon: 'home' },
   { id: 'matches', label: 'Find a buddy', icon: 'users' },
@@ -19,15 +21,47 @@ const NAV = [
 
 async function api(path, options = {}) {
   const isForm = options.body instanceof FormData;
+  const method = (options.method || 'GET').toUpperCase();
+  const headers = { ...(isForm ? {} : { 'Content-Type': 'application/json' }), ...options.headers };
+  if (!(method === 'GET' && path === '/api/me') && path !== '/api/auth/config') {
+    try {
+      const displayedUserId = sessionStorage.getItem(TAB_USER_KEY);
+      if (displayedUserId) headers['X-Client-User-Id'] = displayedUserId;
+    } catch { /* Account changes are still checked when the tab regains focus. */ }
+  }
   const response = await fetch(path, {
     credentials: 'same-origin',
     ...options,
-    headers: isForm ? options.headers : { 'Content-Type': 'application/json', ...options.headers },
+    headers,
   });
   const type = response.headers.get('content-type') || '';
   const data = type.includes('application/json') ? await response.json() : null;
-  if (!response.ok) throw new Error(data?.error || data?.message || `Request failed (${response.status})`);
+  if (!response.ok) {
+    const message = data?.error || data?.message || `Request failed (${response.status})`;
+    if (response.status === 409 && message.startsWith('This tab is signed in as another account.')) {
+      try { sessionStorage.setItem(ACCOUNT_SWITCH_NOTICE_KEY, 'This browser switched accounts in another tab. All tabs now use the same account. Use a private window or a different browser to test two accounts at once.'); } catch { /* Reload still corrects the account shown. */ }
+      window.location.reload();
+    }
+    const error = new Error(message);
+    error.status = response.status;
+    throw error;
+  }
   return data;
+}
+
+function rememberTabUser(userId) {
+  try {
+    if (userId == null) sessionStorage.removeItem(TAB_USER_KEY);
+    else sessionStorage.setItem(TAB_USER_KEY, String(userId));
+  } catch { /* Focus checks still catch account changes if storage is unavailable. */ }
+}
+
+function consumeAccountSwitchNotice() {
+  try {
+    const text = sessionStorage.getItem(ACCOUNT_SWITCH_NOTICE_KEY);
+    sessionStorage.removeItem(ACCOUNT_SWITCH_NOTICE_KEY);
+    return text ? { type: 'error', text } : null;
+  } catch { return null; }
 }
 
 function Icon({ name, size = 20, strokeWidth = 1.8, className = '' }) {
@@ -284,8 +318,9 @@ function Matches({ matches, slots, onRequest, onChat, setView, loading, onRefres
   const [activity, setActivity] = useState('all');
   const filtered = matches.filter(match => {
     const user = match.user || match;
-    const text = `${user.name || ''} ${user.username || ''} ${(user.activities || []).join(' ')} ${(match.sharedActivities || []).join(' ')}`.toLowerCase();
-    return text.includes(query.toLowerCase()) && (activity === 'all' || (user.activities || []).includes(activity));
+    const sharedActivities = match.sharedActivities || [];
+    const text = `${user.name || ''} ${user.username || ''} ${sharedActivities.join(' ')}`.toLowerCase();
+    return text.includes(query.toLowerCase()) && (activity === 'all' || sharedActivities.includes(activity));
   });
   return <div className="page-content"><SectionTitle eyebrow="FIND YOUR PEOPLE" title="Workout buddies" description="People who share your interests and have time to work out when you do." action={<button type="button" className="button button-subtle" onClick={onRefresh} disabled={loading}><Icon name="refresh" size={17} /> Refresh</button>} />
     {!slots.length && <div className="callout"><Icon name="info" size={20} /><div><strong>Add your free times to improve your matches.</strong><p>Matching works best when we know when you could meet.</p></div><button type="button" className="link-button" onClick={() => setView('availability')}>Add times <Icon name="arrow" size={16} /></button></div>}
@@ -372,7 +407,7 @@ function Profile({ me, onSave, setView, hasAvailability }) {
   function update(key, value) { setForm(prev => ({ ...prev, [key]: value })); setSuccess(false); }
   function toggle(key, value) { update(key, form[key].includes(value) ? form[key].filter(x => x !== value) : [...form[key], value]); }
   async function submit(event) { event.preventDefault(); setError(''); setBusy(true); try { await onSave(form); setSuccess(true); } catch (e) { setError(e.message); } finally { setBusy(false); } }
-  return <div className="page-content"><SectionTitle eyebrow="MAKE IT YOURS" title="My profile" description="Show potential buddies what you enjoy and who you feel comfortable working out with." /><form className="profile-layout" onSubmit={submit}><section className="panel profile-main"><div className="profile-intro"><Avatar name={form.name} size="large" /><div><h3>{form.name || 'Your profile'}</h3><p>{form.username ? `@${form.username}` : 'Choose a username'}</p><p>{me.email}</p></div></div><div className="profile-fields"><label>Full name<input type="text" value={form.name} onChange={e => update('name', e.target.value)} required maxLength={80} /></label><label>Username<input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={form.username} onChange={e => update('username', e.target.value.toLowerCase())} placeholder="your_username" aria-describedby="profile-username-help" required minLength={3} maxLength={24} pattern="[a-z0-9_]{3,24}" /></label><p className="field-help" id="profile-username-help">A public, unique name with 3–24 letters, numbers, or underscores.</p><div className="form-pair"><label>Gender<select value={form.gender} onChange={e => update('gender', e.target.value)}><option value="prefer-not-to-say">Prefer not to say</option><option value="female">Woman</option><option value="male">Man</option><option value="nonbinary">Nonbinary</option></select></label><label>Partner preference<select value={form.partnerPreference} onChange={e => update('partnerPreference', e.target.value)}><option value="any">Any gender</option><option value="female">Women</option><option value="male">Men</option><option value="nonbinary">Nonbinary people</option></select></label></div><p className="field-help">Your partner preference helps decide which matches you see.</p><label>Experience level<select value={form.experience} onChange={e => update('experience', e.target.value)}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></label><label>About you<textarea rows="4" maxLength={300} value={form.bio} onChange={e => update('bio', e.target.value)} placeholder="What kind of workout buddy are you looking for?" /></label><span className="char-count">{form.bio.length}/300</span></div></section><section className="profile-side"><div className="panel selection-panel"><h3>Activities</h3><p>Pick what you’re open to doing.</p><div className="option-grid">{ACTIVITIES.map(item => <label className={`option-chip ${form.activities.includes(item) ? 'selected' : ''}`} key={item}><input type="checkbox" checked={form.activities.includes(item)} onChange={() => toggle('activities', item)} /><span>{item}</span><Icon name="check" size={15} /></label>)}</div></div><div className="panel selection-panel"><h3>Meeting places</h3><p>Choose locations that work for you.</p><div className="option-grid">{LOCATIONS.map(item => <label className={`option-chip ${form.locations.includes(item) ? 'selected' : ''}`} key={item}><input type="checkbox" checked={form.locations.includes(item)} onChange={() => toggle('locations', item)} /><span>{item}</span><Icon name="check" size={15} /></label>)}</div></div><div className="profile-save">{error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}{success && <p className="inline-success" role="status"><Icon name="check" size={16} />Profile saved.</p>}<button type="submit" className="button button-primary button-full" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}<Icon name="arrow" size={17} /></button>{success && !hasAvailability && <button type="button" className="button button-outline button-full" onClick={() => setView('availability')}>Next: add free time <Icon name="calendar" size={17} /></button>}</div></section></form></div>;
+  return <div className="page-content"><SectionTitle eyebrow="MAKE IT YOURS" title="My profile" description="Show potential buddies what you enjoy and who you feel comfortable working out with." /><form className="profile-layout" onSubmit={submit}><section className="panel profile-main"><div className="profile-intro"><Avatar name={form.name} size="large" /><div><h3>{form.name || 'Your profile'}</h3><p>{form.username ? `@${form.username}` : 'Choose a username'}</p><p>{me.email}</p></div></div><div className="profile-fields"><label>Full name<input type="text" value={form.name} onChange={e => update('name', e.target.value)} required maxLength={80} /></label><label>Username<input type="text" autoComplete="username" autoCapitalize="none" spellCheck={false} value={form.username} onChange={e => update('username', e.target.value.toLowerCase())} placeholder="your_username" aria-describedby="profile-username-help" required minLength={3} maxLength={24} pattern="[a-z0-9_]{3,24}" /></label><p className="field-help" id="profile-username-help">A public, unique name with 3–24 letters, numbers, or underscores.</p><div className="form-pair"><label>Gender<select value={form.gender} onChange={e => update('gender', e.target.value)}><option value="prefer-not-to-say">Prefer not to say</option><option value="female">Woman</option><option value="male">Man</option><option value="nonbinary">Nonbinary</option></select></label><label>Partner preference<select value={form.partnerPreference} onChange={e => update('partnerPreference', e.target.value)}><option value="any">Any gender</option><option value="female">Women</option><option value="male">Men</option><option value="nonbinary">Nonbinary people</option></select></label></div><p className="field-help">Your partner preference affects Find a buddy and Working out now. Both people must allow each other to appear.</p><label>Experience level<select value={form.experience} onChange={e => update('experience', e.target.value)}><option value="beginner">Beginner</option><option value="intermediate">Intermediate</option><option value="advanced">Advanced</option></select></label><label>About you<textarea rows="4" maxLength={300} value={form.bio} onChange={e => update('bio', e.target.value)} placeholder="What kind of workout buddy are you looking for?" /></label><span className="char-count">{form.bio.length}/300</span></div></section><section className="profile-side"><div className="panel selection-panel"><h3>Activities</h3><p>Pick what you’re open to doing.</p><div className="option-grid">{ACTIVITIES.map(item => <label className={`option-chip ${form.activities.includes(item) ? 'selected' : ''}`} key={item}><input type="checkbox" checked={form.activities.includes(item)} onChange={() => toggle('activities', item)} /><span>{item}</span><Icon name="check" size={15} /></label>)}</div></div><div className="panel selection-panel"><h3>Meeting places</h3><p>Choose locations that work for you.</p><div className="option-grid">{LOCATIONS.map(item => <label className={`option-chip ${form.locations.includes(item) ? 'selected' : ''}`} key={item}><input type="checkbox" checked={form.locations.includes(item)} onChange={() => toggle('locations', item)} /><span>{item}</span><Icon name="check" size={15} /></label>)}</div></div><div className="profile-save">{error && <p className="inline-error" role="alert"><Icon name="alert" size={16} />{error}</p>}{success && <p className="inline-success" role="status"><Icon name="check" size={16} />Profile saved.</p>}<button type="submit" className="button button-primary button-full" disabled={busy}>{busy ? 'Saving…' : 'Save profile'}<Icon name="arrow" size={17} /></button>{success && !hasAvailability && <button type="button" className="button button-outline button-full" onClick={() => setView('availability')}>Next: add free time <Icon name="calendar" size={17} /></button>}</div></section></form></div>;
 }
 
 function RequestModal({ match, onClose, onSubmit, busy }) {
@@ -472,12 +507,26 @@ export default function App() {
   const [selectedMatch, setSelectedMatch] = useState(null);
   const [activeChatId, setActiveChatId] = useState(null);
   const [meetupBusy, setMeetupBusy] = useState(false);
-  const [notice, setNotice] = useState(null);
+  const [notice, setNotice] = useState(consumeAccountSwitchNotice);
+  const [sessionChecking, setSessionChecking] = useState(false);
+  const [sessionCheckError, setSessionCheckError] = useState('');
+  const sessionOverlayRef = useRef(null);
+  const priorFocusRef = useRef(null);
   const [sendingVerification, setSendingVerification] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [helpRequest, setHelpRequest] = useState(0);
   const helpButtonRef = useRef(null);
   const [tourPromptOpen, setTourPromptOpen] = useState(false);
+  useEffect(() => {
+    if (sessionChecking || sessionCheckError) {
+      if (!priorFocusRef.current) priorFocusRef.current = document.activeElement;
+      sessionOverlayRef.current?.focus();
+    } else if (priorFocusRef.current) {
+      const previous = priorFocusRef.current;
+      priorFocusRef.current = null;
+      window.requestAnimationFrame(() => { if (previous?.isConnected) previous.focus(); });
+    }
+  }, [sessionChecking, sessionCheckError]);
   const closeHelp = useCallback(() => {
     if (me?.id != null) {
       try { localStorage.setItem(`uiuc-gym-buddy-tour-v1:${me.id}`, 'done'); } catch { /* The tour remains dismissible if storage is unavailable. */ }
@@ -512,7 +561,7 @@ export default function App() {
     const failed = [availability, buddyData, meetupData].find(r => r.status === 'rejected');
     if (failed) setNotice({ type: 'error', text: failed.reason.message || 'Some information could not load.' });
   }
-  useEffect(() => { let active = true; (async () => { try { const data = await api('/api/me'); if (active) { setMe(data?.user || data?.me || data); await refreshData(); } } catch (e) { if (active && !/401|unauthorized|not authenticated|sign in to continue/i.test(e.message)) setAuthError(e.message); } finally { if (active) setChecking(false); } })(); return () => { active = false; }; }, []);
+  useEffect(() => { let active = true; (async () => { try { const data = await api('/api/me'); if (active) { const user = data?.user || data?.me || data; rememberTabUser(user?.id); setMe(user); await refreshData(); } } catch (e) { if (active) { if (e.status === 401) rememberTabUser(null); else setAuthError(e.message); } } finally { if (active) setChecking(false); } })(); return () => { active = false; }; }, []);
   useEffect(() => {
     if (me?.id == null) { setHelpOpen(false); setTourPromptOpen(false); return; }
     try {
@@ -537,6 +586,7 @@ export default function App() {
       setAuthBusy(true); setAuthError('');
       try {
         const data = await api('/api/auth/email/verify', { method: 'POST', body: JSON.stringify({ token: linkAction.token }) });
+        rememberTabUser(data.user?.id);
         setMe(data.user);
         await refreshData();
         setView('profile');
@@ -545,6 +595,44 @@ export default function App() {
       finally { processedVerifyLink.current = null; setAuthBusy(false); setLinkAction(null); }
     })();
   }, [checking, linkAction]);
+  useEffect(() => {
+    if (me?.id == null) return undefined;
+    let active = true;
+    let inFlight = false;
+    async function checkAccount() {
+      if (document.visibilityState !== 'visible' || inFlight) return;
+      inFlight = true;
+      setSessionChecking(true);
+      setSessionCheckError('');
+      let switching = false;
+      try {
+        const data = await api('/api/me');
+        if (!active) return;
+        const currentUser = data?.user || data?.me || data;
+        if (String(currentUser?.id) !== String(me.id)) {
+          switching = true;
+          try { sessionStorage.setItem(ACCOUNT_SWITCH_NOTICE_KEY, 'This browser switched accounts in another tab. All tabs now use the same account. Use a private window or a different browser to test two accounts at once.'); } catch { /* Reload still corrects the account shown. */ }
+          window.location.reload();
+        }
+      } catch (error) {
+        if (!active) return;
+        if (error.status === 401) {
+          rememberTabUser(null);
+          setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null);
+          setSelectedMatch(null); resetView('home');
+          setAuthError('You signed out in another tab. Sign in again.');
+        } else {
+          setSessionCheckError('Could not confirm which account is signed in. Check your connection and reload before making changes.');
+        }
+      } finally {
+        inFlight = false;
+        if (active && !switching) setSessionChecking(false);
+      }
+    }
+    window.addEventListener('focus', checkAccount);
+    document.addEventListener('visibilitychange', checkAccount);
+    return () => { active = false; window.removeEventListener('focus', checkAccount); document.removeEventListener('visibilitychange', checkAccount); };
+  }, [me?.id, resetView]);
   useEffect(() => {
     if (!me?.id) return undefined;
     let active = true;
@@ -574,6 +662,7 @@ export default function App() {
       if (mode === 'reset-complete') {
         await api('/api/auth/email/reset/complete', { method: 'POST',
           body: JSON.stringify({ token: values.token, password: values.password }) });
+        rememberTabUser(null);
         setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null);
         resetView('home'); setMobileOpen(false); setLinkAction(null); setNotice(null);
         setAuthMessage('Password changed. Sign in with your new password.');
@@ -583,7 +672,9 @@ export default function App() {
         : { email: values.email, password: values.password };
       const result = await api(`/api/auth/email/${mode}`, { method: 'POST', body: JSON.stringify(payload) });
       const data = result?.user ? result : await api('/api/me');
-      setMe(data?.user || data?.me || data);
+      const user = data?.user || data?.me || data;
+      rememberTabUser(user?.id);
+      setMe(user);
       setNotice(null);
       await refreshData();
       resetView(mode === 'register' ? 'profile' : 'home');
@@ -600,9 +691,37 @@ export default function App() {
     } catch (error) { setNotice({ type: 'error', text: error.message }); }
     finally { setSendingVerification(false); }
   }
-  async function logout() { try { await api('/api/auth/logout', { method: 'POST' }); } catch (e) { /* Clear the local session even if the network fails. */ } setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null); setNotice(null); resetView('home'); setMobileOpen(false); }
-  async function saveProfile(values) { const data = await api('/api/me', { method: 'PATCH', body: JSON.stringify(values) }); setMe(data?.user || data?.me || data); const buddyData = await api('/api/matches'); setMatches(buddyData.matches || []); setNotice({ type: 'success', text: 'Your profile is updated.' }); }
-  async function saveSlots(next) { const data = await api('/api/availability', { method: 'PUT', body: JSON.stringify({ slots: next }) }); setSlots(data?.slots || next); const buddyData = await api('/api/matches'); setMatches(buddyData.matches || []); setNotice({ type: 'success', text: 'Your available times are saved.' }); }
+  async function logout() {
+    try { await api('/api/auth/logout', { method: 'POST' }); }
+    catch (error) {
+      setNotice({ type: 'error', text: 'Could not confirm sign-out. Please check your connection and try again.' });
+      return;
+    }
+    rememberTabUser(null);
+    setMe(null); setSlots([]); setMatches([]); setMeetups([]); setActiveChatId(null);
+    setNotice(null); resetView('home'); setMobileOpen(false);
+  }
+  async function refreshMatchesAfterSave(savedMessage) {
+    try {
+      const buddyData = await api('/api/matches');
+      setMatches(buddyData.matches || []);
+      setNotice({ type: 'success', text: savedMessage });
+    } catch {
+      // The write already succeeded; old matches may no longer fit the saved profile or times.
+      setMatches([]);
+      setNotice({ type: 'error', text: `${savedMessage} Buddy matches could not refresh. Try Refresh in Find a buddy.` });
+    }
+  }
+  async function saveProfile(values) {
+    const data = await api('/api/me', { method: 'PATCH', body: JSON.stringify(values) });
+    setMe(data?.user || data?.me || data);
+    await refreshMatchesAfterSave('Your profile is updated.');
+  }
+  async function saveSlots(next) {
+    const data = await api('/api/availability', { method: 'PUT', body: JSON.stringify({ slots: next }) });
+    setSlots(data?.slots || next);
+    await refreshMatchesAfterSave('Your available times are saved.');
+  }
   async function addImported(next) { await saveSlots(next); setView('availability'); }
   async function sendInvite(values) { setMeetupBusy(true); try { await api('/api/meetups', { method: 'POST', body: JSON.stringify(values) }); const data = await api('/api/meetups'); setMeetups(data.meetups || []); setSelectedMatch(null); setNotice({ type: 'success', text: 'Workout invite sent. You’ll see the reply in Meetups.' }); setView('meetups'); } finally { setMeetupBusy(false); } }
   async function updateMeetup(id, status) { setMeetupBusy(true); try { await api(`/api/meetups/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }) }); const data = await api('/api/meetups'); setMeetups(data.meetups || []); setNotice({ type: 'success', text: status === 'accepted' ? 'Workout confirmed!' : status === 'declined' ? 'Invite declined.' : 'Plan cancelled.' }); } catch (e) { setNotice({ type: 'error', text: e.message }); } finally { setMeetupBusy(false); } }
@@ -612,5 +731,5 @@ export default function App() {
   if (!me || linkAction?.type === 'reset') return <AuthScreen onAuth={auth} error={authError}
     message={authMessage} busy={authBusy} authOptions={authOptions} linkAction={linkAction}
     signedIn={Boolean(me)} onCancelLink={() => setLinkAction(null)} />;
-  return <div className="app-shell"><a className="skip-link" href="#main-content">Skip to main content</a><Sidebar view={view} setView={setView} me={me} onLogout={logout} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} pendingCount={pendingCount} /><main className="app-main" id="main-content" data-tour-view={view} tabIndex={-1}><header className="topbar" data-has-back={Boolean(backTarget)}><button type="button" className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button>{backTarget && <button type="button" className="button button-subtle topbar-back" aria-label={`Back to ${backLabel}`} onClick={goBack}><Icon name="back" size={16} /><span>Back</span></button>}<div className="topbar-context"><span className="topbar-dot" /> WORKOUT COMMUNITY</div><div className="topbar-right"><span className="topbar-message">Make today a good day to move.</span><button type="button" className="button button-outline help-trigger" ref={helpButtonRef} onClick={openHelp}>Help</button><Avatar name={me.name} size="small" /></div></header><QuickTourPrompt open={tourPromptOpen} onStart={startHelpTour} onLater={deferHelpTour} />{me.emailVerified === false && <section className="email-verification-banner" aria-labelledby="email-verification-title"><div className="email-verification-copy"><span className="email-verification-icon"><Icon name="shield" size={21} /></span><div><h2 id="email-verification-title">Your account is ready</h2><p>Verify your email when you can so you can reset your password if you forget it.</p></div></div><button type="button" className="button button-outline" disabled={sendingVerification} onClick={sendVerificationEmail}>{sendingVerification ? 'Sending…' : 'Send verification email'}</button></section>}{notice && <div className="notice-wrap"><Notice type={notice.type} onClose={() => setNotice(null)}>{notice.text}</Notice></div>}{view === 'home' && <Home me={me} slots={slots} matches={matches} meetups={meetups} setView={setView} onRequest={setSelectedMatch} onChat={startChat} />}{view === 'matches' && <Matches matches={matches} slots={slots} onRequest={setSelectedMatch} onChat={startChat} setView={setView} loading={loadingMatches} onRefresh={refreshData} />}{view === 'now' && <PresencePage me={me} api={api} onChat={startChat} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'chats' && <ChatsPage me={me} api={api} activeChatId={activeChatId} setActiveChatId={setActiveChatId} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'availability' && <Availability slots={slots} onSave={saveSlots} setView={setView} />}{view === 'import' && <ImportSchedule slots={slots} onAdd={addImported} />}{view === 'meetups' && <Meetups meetups={meetups} me={me} onStatus={updateMeetup} saving={meetupBusy} />}{view === 'profile' && <Profile me={me} onSave={saveProfile} setView={setView} hasAvailability={slots.length > 0} />}</main>{selectedMatch && <RequestModal key={selectedMatch.user?.id || selectedMatch.id} match={selectedMatch} onClose={() => setSelectedMatch(null)} onSubmit={sendInvite} busy={meetupBusy} />}<GuidedHelp open={helpOpen} onClose={closeHelp} onNavigate={setView} userId={me?.id} view={view} helpRequest={helpRequest} /></div>;
+  return <><div className="app-shell" inert={sessionChecking || sessionCheckError ? "" : undefined} aria-hidden={Boolean(sessionChecking || sessionCheckError)}><a className="skip-link" href="#main-content">Skip to main content</a><Sidebar view={view} setView={setView} me={me} onLogout={logout} mobileOpen={mobileOpen} setMobileOpen={setMobileOpen} pendingCount={pendingCount} /><main className="app-main" id="main-content" data-tour-view={view} tabIndex={-1}><header className="topbar" data-has-back={Boolean(backTarget)}><button type="button" className="icon-button mobile-menu" aria-label="Open menu" onClick={() => setMobileOpen(true)}><Icon name="menu" /></button>{backTarget && <button type="button" className="button button-subtle topbar-back" aria-label={`Back to ${backLabel}`} onClick={goBack}><Icon name="back" size={16} /><span>Back</span></button>}<div className="topbar-context"><span className="topbar-dot" /> WORKOUT COMMUNITY</div><div className="topbar-right"><span className="topbar-message">Make today a good day to move.</span><button type="button" className="button button-outline help-trigger" ref={helpButtonRef} onClick={openHelp}>Help</button><Avatar name={me.name} size="small" /></div></header><QuickTourPrompt open={tourPromptOpen} onStart={startHelpTour} onLater={deferHelpTour} />{me.emailVerified === false && <section className="email-verification-banner" aria-labelledby="email-verification-title"><div className="email-verification-copy"><span className="email-verification-icon"><Icon name="shield" size={21} /></span><div><h2 id="email-verification-title">Your account is ready</h2><p>Verify your email when you can so you can reset your password if you forget it.</p></div></div><button type="button" className="button button-outline" disabled={sendingVerification} onClick={sendVerificationEmail}>{sendingVerification ? 'Sending…' : 'Send verification email'}</button></section>}{notice && <div className="notice-wrap"><Notice type={notice.type} onClose={() => setNotice(null)}>{notice.text}</Notice></div>}{view === 'home' && <Home me={me} slots={slots} matches={matches} meetups={meetups} setView={setView} onRequest={setSelectedMatch} onChat={startChat} />}{view === 'matches' && <Matches matches={matches} slots={slots} onRequest={setSelectedMatch} onChat={startChat} setView={setView} loading={loadingMatches} onRefresh={refreshData} />}{view === 'now' && <PresencePage me={me} api={api} onChat={startChat} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'chats' && <ChatsPage me={me} api={api} activeChatId={activeChatId} setActiveChatId={setActiveChatId} setView={setView} Avatar={Avatar} Icon={Icon} />}{view === 'availability' && <Availability slots={slots} onSave={saveSlots} setView={setView} />}{view === 'import' && <ImportSchedule slots={slots} onAdd={addImported} />}{view === 'meetups' && <Meetups meetups={meetups} me={me} onStatus={updateMeetup} saving={meetupBusy} />}{view === 'profile' && <Profile me={me} onSave={saveProfile} setView={setView} hasAvailability={slots.length > 0} />}</main>{selectedMatch && <RequestModal key={selectedMatch.user?.id || selectedMatch.id} match={selectedMatch} onClose={() => setSelectedMatch(null)} onSubmit={sendInvite} busy={meetupBusy} />}<GuidedHelp open={helpOpen} onClose={closeHelp} onNavigate={setView} userId={me?.id} view={view} helpRequest={helpRequest} /></div>{(sessionChecking || sessionCheckError) && <div ref={sessionOverlayRef} className="startup session-check-overlay" role="alertdialog" aria-modal="true" aria-label="Confirming your account" tabIndex={-1}><Brand />{sessionCheckError ? <><p>{sessionCheckError}</p><button type="button" className="button button-primary" onClick={() => window.location.reload()}>Reload to retry</button></> : <><div className="spinner" aria-label="Loading" /><p>Confirming your account…</p></>}</div>}</>;
 }

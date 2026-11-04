@@ -28,6 +28,8 @@ The importer uses the next seven days in the `America/Chicago` timezone to propo
 
 Chat messages and profiles are stored in the app database. A student can block another person; blocks hide both students from each other's discovery and prevent new messages and invitations. To reduce unwanted invites, a student can send up to 10 workout invitations per day, with up to 3 to the same person. Reports are recorded, but a human review process is still needed before opening the app to the wider campus.
 
+To check **Working out now** with two accounts, use different browsers or a normal and private window; tabs in one browser profile share one sign-in cookie. Give both profiles a shared activity and gym, choose partner preferences that allow each other, then have one account post for 30–120 minutes and the other tap Refresh. Each account sees its own status separately from the compatible people list. The status is saved in the app database until it expires or its owner stops sharing.
+
 ## iPhone and web
 
 The responsive website includes an installable Home Screen experience. After it is hosted over HTTPS, open it in Safari on an iPhone and choose **Share → Add to Home Screen**. The site and the native app use the same server and student data.

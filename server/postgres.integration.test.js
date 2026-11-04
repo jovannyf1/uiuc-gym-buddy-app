@@ -2,6 +2,7 @@ import test, { after } from 'node:test';
 import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import pg from 'pg';
+import { chicagoNow, weekdayForDate } from './core.js';
 
 const { Pool } = pg;
 const connectionString = process.env.PG_TEST_URL;
@@ -10,6 +11,27 @@ const sentEmails = [];
 let server;
 let db;
 let auditPool;
+
+async function holdFirstConflictReads(queryPattern, work) {
+  const originalPrepare = db.prepare.bind(db);
+  let reads = 0;
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const timeout = setTimeout(release, 1_000);
+  db.prepare = sql => {
+    const statement = originalPrepare(sql);
+    if (!queryPattern.test(sql)) return statement;
+    return {
+      get: (...params) => {
+        const result = statement.get(...params);
+        if (++reads === 2) release();
+        return gate.then(() => result);
+      },
+    };
+  };
+  try { return await work(); }
+  finally { clearTimeout(timeout); release(); delete db.prepare; }
+}
 
 test('PostgreSQL email account journey, matching, chat, limits, and persistence', {
   skip: !connectionString,
@@ -99,6 +121,84 @@ test('PostgreSQL email account journey, matching, chat, limits, and persistence'
   const matches = await request('/api/matches', { cookie: alice.cookie });
   assert.equal(matches.status, 200);
   assert.deepEqual(matches.body.matches.map(match => match.user.id), [bob.id]);
+
+  // Production uses separate pool connections. Competing invitations that
+  // reserve the same member's time must serialize across those connections.
+  const carol = await emailStudent('Carol Test', `carol-${runId}@example.com`);
+  assert.equal((await request('/api/me', { method: 'PATCH', cookie: carol.cookie, body: profile })).status, 200);
+  assert.equal((await request('/api/availability', {
+    method: 'PUT', cookie: carol.cookie, body: { slots },
+  })).status, 200);
+  const future = new Date(`${chicagoNow().date}T12:00:00Z`);
+  future.setUTCDate(future.getUTCDate() + 14);
+  const workoutDate = future.toISOString().slice(0, 10);
+  const competingInvite = { toUserId: carol.id, activity: 'Strength training', location: 'ARC',
+    date: workoutDate, day: weekdayForDate(workoutDate), start: '17:00', end: '18:00' };
+  const competingResults = await holdFirstConflictReads(/SELECT 1 FROM meetups\s+WHERE/, () =>
+    Promise.all([alice, bob].map(student => request('/api/meetups', {
+      method: 'POST', cookie: student.cookie, body: competingInvite,
+    }))));
+  assert.deepEqual(competingResults.map(result => result.status).sort(), [201, 409]);
+  assert.equal((await db.prepare(`SELECT COUNT(*) AS total FROM meetups WHERE to_user_id = ?
+    AND date = ? AND status = 'pending'`).get(carol.id, workoutDate)).total, 1);
+  future.setUTCDate(future.getUTCDate() + 7);
+  const legacyDate = future.toISOString().slice(0, 10);
+  const insertPending = db.prepare(`INSERT INTO meetups
+    (from_user_id, to_user_id, activity, date, day, start, "end", location, status, created_at)
+    VALUES (?, ?, 'Strength training', ?, ?, '17:00', '18:00', 'ARC', 'pending', ?)`);
+  const pendingIds = [];
+  for (const sender of [alice, bob]) {
+    const result = await insertPending.run(sender.id, carol.id, legacyDate,
+      weekdayForDate(legacyDate), new Date().toISOString());
+    pendingIds.push(result.lastInsertRowid);
+  }
+  const acceptanceResults = await holdFirstConflictReads(/SELECT 1 FROM meetups WHERE id !=/, () =>
+    Promise.all(pendingIds.map(id => request(`/api/meetups/${id}`, {
+      method: 'PATCH', cookie: carol.cookie, body: { status: 'accepted' },
+    }))));
+  assert.deepEqual(acceptanceResults.map(result => result.status).sort(), [200, 409]);
+  assert.equal((await db.prepare(`SELECT COUNT(*) AS total FROM meetups WHERE to_user_id = ?
+    AND date = ? AND status = 'accepted'`).get(carol.id, legacyDate)).total, 1);
+
+  // Working Out Now must be saved in PostgreSQL and visible to another
+  // compatible account, even before either person verifies their email.
+  assert.notEqual(alice.cookie, bob.cookie, 'the two people have separate sessions');
+  assert.equal((await request('/api/presence/nearby')).status, 401);
+  const sharedPresence = await request('/api/presence', {
+    method: 'PUT', cookie: bob.cookie,
+    body: { activity: 'Strength training', location: 'ARC', durationMinutes: 60 },
+  });
+  assert.equal(sharedPresence.status, 200);
+  assert.ok(Date.parse(sharedPresence.body.presence.expiresAt) > Date.now());
+  assert.deepEqual((await request('/api/presence/me', { cookie: bob.cookie })).body.presence,
+    sharedPresence.body.presence);
+  const visiblePresence = await request('/api/presence/nearby', { cookie: alice.cookie });
+  assert.equal(visiblePresence.status, 200);
+  assert.deepEqual(visiblePresence.body.people.map(person => person.user.id), [bob.id]);
+  assert.equal(visiblePresence.body.people[0].location, 'ARC');
+  assert.deepEqual((await request('/api/presence/nearby', { cookie: bob.cookie })).body.people, [],
+    'a member does not see their own post as a second person');
+
+  await request('/api/me', {
+    method: 'PATCH', cookie: alice.cookie, body: { locations: ['CRCE'] },
+  });
+  assert.deepEqual((await request('/api/presence/nearby', { cookie: alice.cookie })).body.people, [],
+    'a post at a gym outside the viewer’s profile stays hidden');
+  await request('/api/me', {
+    method: 'PATCH', cookie: alice.cookie, body: { locations: ['ARC'] },
+  });
+  assert.deepEqual((await request('/api/presence/nearby', { cookie: alice.cookie })).body.people
+    .map(person => person.user.id), [bob.id]);
+
+  await db.prepare('UPDATE workout_presence SET expires_at = ? WHERE user_id = ?')
+    .run(Date.now() - 1, bob.id);
+  assert.deepEqual((await request('/api/presence/nearby', { cookie: alice.cookie })).body.people, [],
+    'an expired post is no longer discoverable');
+  assert.equal((await request('/api/presence/me', { cookie: bob.cookie })).body.presence, null);
+  assert.equal((await request('/api/presence', {
+    method: 'PUT', cookie: bob.cookie,
+    body: { activity: 'Strength training', location: 'ARC', durationMinutes: 60 },
+  })).status, 200, 'the member can share a new status after the old one expires');
 
   const started = await request('/api/chats', {
     method: 'POST', cookie: alice.cookie, body: { toUserId: bob.id },
@@ -240,6 +340,12 @@ test('PostgreSQL email account journey, matching, chat, limits, and persistence'
     const persistedMessage = await reconnected.prepare('SELECT body FROM chat_messages WHERE chat_id = ? AND body = ?')
       .get(chatId, 'Want to meet at ARC?');
     assert.equal(persistedMessage.body, 'Want to meet at ARC?');
+    const persistedPresence = await reconnected.prepare('SELECT activity, location, expires_at FROM workout_presence WHERE user_id = ?')
+      .get(bob.id);
+    assert.equal(persistedPresence.activity, 'Strength training');
+    assert.equal(persistedPresence.location, 'ARC');
+    assert.ok(persistedPresence.expires_at > Date.now(),
+      'the new post survives closing and reopening the database');
   } finally {
     await reconnected.close();
   }

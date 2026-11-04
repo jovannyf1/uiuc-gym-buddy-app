@@ -75,6 +75,7 @@ function SafetyActions({ user, api, onBlocked }) {
 
 export function PresencePage({ me, api, onChat, setView, Avatar, Icon }) {
   const [mine, setMine] = useState(null);
+  const [ownStatusUnconfirmed, setOwnStatusUnconfirmed] = useState(false);
   const [people, setPeople] = useState([]);
   const [activity, setActivity] = useState(me.activities?.[0] || '');
   const [location, setLocation] = useState(me.locations?.[0] || '');
@@ -82,16 +83,29 @@ export function PresencePage({ me, api, onChat, setView, Avatar, Icon }) {
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [listError, setListError] = useState('');
   const [chattingId, setChattingId] = useState(null);
   const canShare = Boolean(me.activities?.length && me.locations?.length);
+  useEffect(() => {
+    if (!me.activities?.includes(activity)) setActivity(me.activities?.[0] || '');
+    if (!me.locations?.includes(location)) setLocation(me.locations?.[0] || '');
+  }, [me.activities, me.locations, activity, location]);
   async function refresh(silent = false) {
     if (!silent) setLoading(true);
     const [myResult, peopleResult] = await Promise.allSettled([api('/api/presence/me'), api('/api/presence/nearby')]);
-    if (myResult.status === 'fulfilled') setMine(myResult.value.presence || null);
-    if (peopleResult.status === 'fulfilled') setPeople(peopleResult.value.people || []);
-    const failed = [myResult, peopleResult].find(result => result.status === 'rejected');
-    if (failed) setError(failed.reason.message || 'Could not load active workouts.');
-    else setError('');
+    if (myResult.status === 'fulfilled') {
+      setMine(myResult.value.presence || null);
+      setOwnStatusUnconfirmed(false);
+    } else setOwnStatusUnconfirmed(true);
+    if (peopleResult.status === 'fulfilled') {
+      setPeople(peopleResult.value.people || []);
+      setListError('');
+    } else {
+      setPeople([]);
+      setListError(peopleResult.reason.message || 'Could not load active workouts.');
+    }
+    setError(myResult.status === 'rejected'
+      ? myResult.reason.message || 'Could not load your workout status.' : '');
     setLoading(false);
   }
   useEffect(() => {
@@ -107,13 +121,14 @@ export function PresencePage({ me, api, onChat, setView, Avatar, Icon }) {
     try {
       const data = await api('/api/presence', { method: 'PUT', body: JSON.stringify({ activity, location, durationMinutes }) });
       setMine(data.presence);
+      setOwnStatusUnconfirmed(false);
       await refresh(true);
     } catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
   async function stop() {
     setBusy(true); setError('');
-    try { await api('/api/presence', { method: 'DELETE' }); setMine(null); await refresh(true); }
+    try { await api('/api/presence', { method: 'DELETE' }); setMine(null); setOwnStatusUnconfirmed(false); await refresh(true); }
     catch (e) { setError(e.message); }
     finally { setBusy(false); }
   }
@@ -126,9 +141,10 @@ export function PresencePage({ me, api, onChat, setView, Avatar, Icon }) {
   const currentPeople = people.filter(person => new Date(person.expiresAt).getTime() > Date.now());
   return <div className="page-content social-page"><div className="section-head"><div><span className="eyebrow">FIND COMPANY IN THE MOMENT</span><h2>Working out now</h2><p>See compatible people who opted in to find a gym buddy at their chosen location right now. We do not track anyone’s location.</p></div><button type="button" className="button button-subtle" onClick={() => refresh()} disabled={loading}><Icon name="refresh" size={17} /> Refresh</button></div>
     <div className="presence-layout"><section className="panel presence-own"><div className="panel-heading"><span className="panel-icon"><Icon name="bolt" size={21} /></span><div><h3>Your workout status</h3><p>Let a compatible buddy know you’re open to company.</p></div></div>
-      {!canShare ? <div className="social-note"><p>Choose at least one activity and meeting place in your profile before sharing that you’d be open to a workout.</p><button type="button" className="button button-outline" onClick={() => setView('profile')}>Update profile</button></div> : <><form className="add-time-form" onSubmit={share}><label>Activity<select value={activity} onChange={event => setActivity(event.target.value)}>{me.activities.map(item => <option key={item}>{item}</option>)}</select></label><label>Gym<select value={location} onChange={event => setLocation(event.target.value)}>{me.locations.map(item => <option key={item}>{item}</option>)}</select></label><label>Share for<select value={durationMinutes} onChange={event => setDurationMinutes(Number(event.target.value))}><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={90}>1½ hours</option><option value={120}>2 hours</option></select></label><button type="submit" className="button button-primary button-full" disabled={busy}>{busy ? 'Saving…' : active ? 'Update workout status' : 'I’m open to a workout now'}</button></form>{active && <div className="presence-active" role="status"><strong>Your workout status is visible at {mine.location}</strong><span>{mine.activity} · Until {campusTime(mine.expiresAt)}</span><button type="button" className="button button-outline" onClick={stop} disabled={busy}>Stop sharing now</button></div>}</>}
+      {!canShare ? <div className="social-note"><p>Choose at least one activity and meeting place in your profile before sharing that you’d be open to a workout.</p><button type="button" className="button button-outline" onClick={() => setView('profile')}>Update profile</button></div> : <form className="add-time-form" onSubmit={share}><label>Activity<select value={activity} onChange={event => setActivity(event.target.value)}>{me.activities.map(item => <option key={item}>{item}</option>)}</select></label><label>Gym<select value={location} onChange={event => setLocation(event.target.value)}>{me.locations.map(item => <option key={item}>{item}</option>)}</select></label><label>Share for<select value={durationMinutes} onChange={event => setDurationMinutes(Number(event.target.value))}><option value={30}>30 minutes</option><option value={60}>1 hour</option><option value={90}>1½ hours</option><option value={120}>2 hours</option></select></label><button type="submit" className="button button-primary button-full" disabled={busy}>{busy ? 'Saving…' : active ? 'Update workout status' : 'I’m open to a workout now'}</button></form>}
+      {active && <div className="presence-active" role="status"><strong>{ownStatusUnconfirmed ? 'Last known workout status' : 'Your workout status is active'} at {mine.location}</strong><span>{mine.activity} · Until {campusTime(mine.expiresAt)}{ownStatusUnconfirmed && ' · Could not confirm whether it is still active'}</span><button type="button" className="button button-outline" onClick={stop} disabled={busy}>Stop sharing now</button></div>}
       <p className="presence-privacy"><Icon name="lock" size={17} /> Only your chosen gym and activity appear here. Sharing ends automatically.</p>{error && <p className="inline-error" role="alert">{error}</p>}</section>
-      <section className="presence-community"><div className="presence-list-heading"><h3>People open to a buddy</h3><span>{currentPeople.length} sharing</span></div>{loading ? <div className="loading-panel">Checking active workout posts…</div> : currentPeople.length ? <div className="presence-list">{currentPeople.map((person, index) => <article className="panel presence-card" key={person.user.id}><div className="presence-card-top"><Avatar name={person.user.name} index={index} /><div><h4>{person.user.name}</h4><p>{person.activity} · {person.location}</p></div><span className="presence-live"><span /> Open now</span></div><p>Sharing until {campusTime(person.expiresAt)}</p><div className="presence-card-actions"><button type="button" className="button button-outline" onClick={() => beginChat(person.user)} disabled={chattingId === person.user.id}><Icon name="chat" size={17} /> {chattingId === person.user.id ? 'Opening…' : 'Chat about a workout'}</button><SafetyActions user={person.user} api={api} onBlocked={() => refresh(true)} /></div></article>)}</div> : <div className="panel social-empty"><Icon name="users" size={29} /><h4>No one is sharing right now</h4><p>Check back later, or browse people whose weekly free times overlap yours.</p><button type="button" className="button button-outline" onClick={() => setView('matches')}>Find a buddy</button></div>}</section></div>
+      <section className="presence-community"><div className="presence-list-heading"><h3>People open to a buddy</h3><span>{currentPeople.length} compatible now</span></div>{loading ? <div className="loading-panel">Checking active workout posts…</div> : listError ? <div className="panel social-empty" role="alert"><Icon name="alert" size={29} /><h4>Could not check active workouts</h4><p>{listError}</p><button type="button" className="button button-outline" onClick={() => refresh()}>Try again</button></div> : currentPeople.length ? <div className="presence-list">{currentPeople.map((person, index) => <article className="panel presence-card" key={person.user.id}><div className="presence-card-top"><Avatar name={person.user.name} index={index} /><div><h4>{person.user.name}</h4><p>{person.activity} · {person.location}</p></div><span className="presence-live"><span /> Open now</span></div><p>Sharing until {campusTime(person.expiresAt)}</p><div className="presence-card-actions"><button type="button" className="button button-outline" onClick={() => beginChat(person.user)} disabled={chattingId === person.user.id}><Icon name="chat" size={17} /> {chattingId === person.user.id ? 'Opening…' : 'Chat about a workout'}</button><SafetyActions user={person.user} api={api} onBlocked={() => refresh(true)} /></div></article>)}</div> : <div className="panel social-empty"><Icon name="users" size={29} /><h4>No compatible people are sharing right now</h4><p>Only people with a shared activity and gym, and mutual partner preferences, appear here. Workout posts also end after their chosen time.</p><button type="button" className="button button-outline" onClick={() => setView('profile')}>Check my profile</button></div>}</section></div>
   </div>;
 }
 
